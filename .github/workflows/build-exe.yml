@@ -1,0 +1,42 @@
+name: Build EXE
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'android/**'
+      - '.github/workflows/build-apk.yml'
+      - 'README.md'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Ikona programu
+        run: go run github.com/akavel/rsrc@v0.10.2 -ico icon.ico -arch amd64 -o rsrc_windows_amd64.syso
+      - name: Build Windows EXE
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+        run: go build -trimpath -ldflags "-s -w -H windowsgui" -o WydarzeniaGieldowe.exe .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WydarzeniaGieldowe-EXE
+          path: WydarzeniaGieldowe.exe
+      - name: Publish release "windows"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete windows --yes --cleanup-tag || true
+          gh release create windows WydarzeniaGieldowe.exe \
+            --title "Wydarzenia Giełdowe – Windows, wersja ${GITHUB_RUN_NUMBER}" \
+            --notes "Pobierz WydarzeniaGieldowe.exe i uruchom. Wymaga WebView2 (wbudowany w Windows 10/11). Dane zostają przy aktualizacji."

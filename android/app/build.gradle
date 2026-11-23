@@ -1,0 +1,58 @@
+plugins {
+    id 'com.android.application'
+}
+
+def runNumber = (System.getenv('GITHUB_RUN_NUMBER') ?: '1') as Integer
+
+android {
+    namespace 'pl.mariusz.wydarzeniagieldowe'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'pl.mariusz.wydarzeniagieldowe'
+        minSdk 26
+        targetSdk 34
+        versionCode runNumber
+        versionName "0.1.${runNumber}"
+    }
+
+    // Ten sam klucz co Dziennik FBW, Post Przerywany i Kalendarz Wydarzeń: każda wersja instaluje się jako aktualizacja
+    signingConfigs {
+        release {
+            storeFile file('fbw.keystore')
+            storePassword 'dziennikfbw'
+            keyAlias 'fbw'
+            keyPassword 'dziennikfbw'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+
+    // Wspólny interfejs z wersją na Windows: ui/index.html z katalogu głównego repo
+    sourceSets {
+        main {
+            assets.srcDirs += ['build/sharedAssets']
+        }
+    }
+}
+
+tasks.register('copySharedAssets', Copy) {
+    from(rootProject.file('../ui/index.html'))
+    into layout.buildDirectory.dir('sharedAssets')
+}
+preBuild.dependsOn 'copySharedAssets'
