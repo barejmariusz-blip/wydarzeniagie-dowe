@@ -678,7 +678,7 @@ function vCalendar(){
       <button class="btn sm" id="pm">‹</button><b>${MN1[m]} ${y}</b><button class="btn sm" id="nm">›</button></div>
     <div class="grid">${['pon','wt','śr','czw','pt','sob','nd'].map(x => `<div class="h">${x}</div>`).join('')}${cells}</div>
     <div class="row" style="margin-top:8px;font-size:12px;color:var(--mut)"><span><i class="imp" style="background:var(--hi)"></i>wysoki</span><span><i class="imp" style="background:var(--md)"></i>średni</span><span><i class="imp" style="background:var(--lo)"></i>niski</span><span><i class="imp" style="background:#24141a;border:1px solid var(--line)"></i>giełda zamknięta</span></div>
-    <div style="margin-top:12px">${calSel ? (sel.length ? sel.map(evRow).join('') : '<div class="empty">Brak wydarzeń tego dnia</div>') : '<div class="empty"><small>Kliknij dzień, żeby zobaczyć wydarzenia</small></div>'}</div>`;
+    <div style="margin-top:12px">${calSel ? (sel.length ? sel.map(evRow).join('') : '<div class="empty">Brak wydarzeń tego dnia</div>') : '<div class="empty"><small>Kliknij dzień, żeby zobaczyć wydarzenia, a wydarzenie, żeby zobaczyć opis</small></div>'}</div>`;
   $('#pm').onclick = () => { calMonth = new Date(y, m-1, 1); calSel = null; render(); };
   $('#nm').onclick = () => { calMonth = new Date(y, m+1, 1); calSel = null; render(); };
 }
@@ -769,7 +769,7 @@ function vSettings(){
     <button class="btn sm" id="exp">Eksport kopii</button>
     <label class="btn sm" style="margin:0;color:var(--tx)">Import kopii<input type="file" id="imp" accept=".json,application/json" style="display:none"></label>
     <button class="btn sm" id="xIcs">Eksport widocznych do .ics</button>
-    <button class="btn sm" id="tst">Test powiadomienia</button></div>
+    <button class="btn sm" id="tst">Test powiadomienia</button><button class="btn sm" id="gls">📖 Słownik pojęć</button></div>
     <small>Zaplanowane przypomnienia: ${reschedule().length} (najbliższe ${MAX_ALARMS}). Ostatnia synchronizacja: ${S.set.lastSync ? new Date(S.set.lastSync).toLocaleString('pl-PL') : 'nigdy'}</small></div>
   <p style="text-align:center"><small>Wydarzenia Giełdowe v${VERSION} · ${IS_ANDROID ? 'Android' : IS_WIN ? 'Windows' : 'przeglądarka'}<br>made by PanRodla · all rights reserved</small></p>`;
   bindRem('#rH', R.high); bindRem('#rM', R.med); bindRem('#rL', R.low); bindRem('#rB', S.set.remBank);
@@ -788,10 +788,183 @@ function vSettings(){
   $('#imp').onchange = e => { const f = e.target.files[0]; if (!f) return; f.text().then(t => {
     try{ const s = JSON.parse(t); if (s.v !== 1) throw 0; S = migrate(s); save(); reschedule(); toast('Wczytano kopię'); render(); }catch(_){ toast('Zły plik'); } }); };
   $('#xIcs').onclick = async () => toast(await Native.saveFile('wydarzenia-gieldowe.ics', makeICS(visible().filter(e => e.end > Date.now())), 'text/calendar'));
+  $('#gls').onclick = openGlossary;
   $('#tst').onclick = () => Native.test('⏰ 14:30 USD CPI m/m', 'Za 5 min · Prognoza: 0.3% · Poprzednio: 0.2%');
   if ($('#auto')) fetch('/api/autostart').then(r => r.json()).then(j => { const b = $('#auto'); if (!b) return;
     b.textContent = 'Uruchamiaj z Windows: ' + (j.on ? 'tak' : 'nie'); b.classList.toggle('on', !!j.on);
     b.onclick = () => fetch('/api/autostart', {method:'POST', body:JSON.stringify({on:!j.on})}).then(() => render()); }).catch(() => {});
+}
+
+/* =========================================================================
+   Opisy wydarzeń: co to jest, jak czytać odczyt, na co wpływa.
+   Dopasowanie: najpierw po typie wydarzenia (klucz), potem po tytule (regex).
+   ========================================================================= */
+
+// Wagi spółek w indeksach są orientacyjne i zmieniają się codziennie.
+// Nasdaq 100: szacunek ChartRow na zamknięcie 23.11.2026. S&P 500: wagi SPY, jesień 2026. DAX: iShares Core DAX, czerwiec 2026.
+const W_DATE = {ndx:'23.11.2026', spx:'jesień 2026', dax:'czerwiec 2026'};
+const WEIGHTS = {
+  AAPL:{n:'Apple', ndx:9.1, spx:7.3, s:'iPhone, usługi (App Store, iCloud), Mac. Wyniki zależą głównie od sprzedaży iPhone’a i Chin.'},
+  NVDA:{n:'NVIDIA', ndx:7.1, spx:8.5, s:'Chipy do AI i centrów danych. Wyniki są barometrem całego boomu AI: ciągną też AMD, Broadcom, Micron i dostawców sprzętu, a w Europie ASML, Infineon i SAP.'},
+  MSFT:{n:'Microsoft', ndx:6.5, spx:5.8, s:'Chmura Azure, Office, AI (Copilot). Rynek patrzy na wzrost Azure i wydatki na AI.'},
+  GOOGL:{n:'Alphabet (Google)', ndx:5.6, spx:5.5, s:'Reklama w wyszukiwarce i YouTube, chmura Google Cloud. Waga obu klas akcji (GOOGL + GOOG) łącznie.'},
+  GOOG:{n:'Alphabet (Google)', ndx:5.6, spx:5.5, s:'Patrz GOOGL: waga obu klas akcji łącznie.'},
+  AMZN:{n:'Amazon', ndx:4.9, spx:4.0, s:'Handel online i chmura AWS. Najwięcej zysku daje AWS: na nim skupia się rynek.'},
+  META:{n:'Meta (Facebook, Instagram)', ndx:3.2, spx:2.0, s:'Reklama w mediach społecznościowych. Rynek patrzy też na skalę wydatków na AI.'},
+  TSLA:{n:'Tesla', ndx:3.4, spx:2.0, s:'Samochody elektryczne, magazyny energii. Bardzo zmienna reakcja na wyniki, często ±10%.'},
+  AVGO:{n:'Broadcom', ndx:2.7, spx:2.7, s:'Chipy sieciowe i własne układy AI dla gigantów chmurowych.'},
+  MU:{n:'Micron', ndx:3.9, spx:2.0, s:'Pamięci (HBM do AI, DRAM, NAND). Wskaźnik koniunktury w półprzewodnikach.'},
+  AMD:{n:'AMD', ndx:3.6, s:'Procesory i chipy AI, konkurent NVIDII.'},
+  WMT:{n:'Walmart', ndx:3.1, s:'Największy detalista w USA: obraz kondycji amerykańskiego konsumenta.'},
+  COST:{n:'Costco', ndx:2.4, s:'Sieć hurtowni: obraz wydatków konsumentów.'},
+  NFLX:{n:'Netflix', ndx:1.2, s:'Streaming. Reakcje po wynikach często duże.'},
+  PLTR:{n:'Palantir', ndx:1.8, s:'Oprogramowanie analityczne i AI.'},
+  LLY:{n:'Eli Lilly', spx:1.5, s:'Farmacja (leki na otyłość i cukrzycę).'}
+};
+const DAX_W = [  // dopasowanie po nazwie w tytule (ICS / ręczne)
+  [/siemens energy/i, 'Siemens Energy', 7.0], [/siemens(?! energy| healthineers)/i, 'Siemens', 11.5], [/allianz/i, 'Allianz', 8.7], [/\bsap\b/i, 'SAP', 8.5],
+  [/airbus/i, 'Airbus', 6.3], [/infineon/i, 'Infineon', 6.2], [/telekom/i, 'Deutsche Telekom', 5.9], [/munich re|münchener rück/i, 'Munich Re', 3.6],
+  [/rheinmetall/i, 'Rheinmetall', 3.3], [/deutsche bank/i, 'Deutsche Bank', 3.3]
+];
+
+// Wpis: n = nazwa, w = co to jest, u = jak czytać (odczyt powyżej prognozy), e = na co wpływa
+const HAWK = 'Wyżej niż prognoza: inflacja mocniejsza, więc banki centralne dłużej trzymają wysokie stopy (scenariusz „jastrzębi”). Zwykle umacnia walutę, podnosi rentowności obligacji i ciąży indeksom, najbardziej technologicznym (Nasdaq). Niżej niż prognoza działa odwrotnie.';
+const GROW = 'Wyżej niż prognoza: gospodarka silniejsza. Zwykle umacnia walutę. Dla indeksów zależy od tła: przy wysokiej inflacji mocne dane = obawa przed wyższymi stopami (indeksy w dół), przy obawach o recesję = ulga (indeksy w górę).';
+const GROW_INV = 'Wyżej niż prognoza: rynek pracy słabszy (więcej bezrobotnych). Zwykle osłabia walutę i zwiększa szanse na obniżki stóp. Dla indeksów to samo co przy danych o wzroście, tylko odwrotnie.';
+const KB = [
+  // ---------- USA: inflacja ----------
+  {rx:/core pce/i, n:'Bazowy deflator PCE', w:'Inflacja wydatków konsumpcyjnych bez żywności i energii. To miara inflacji, którą Fed oficjalnie bierze za cel (2%).', u:HAWK, e:'Rynek zna już zwykle CPI i PPI, więc PCE rzadziej zaskakuje, ale duże odchylenie mocno rusza oczekiwania co do Fed.'},
+  {rx:/core cpi/i, n:'Inflacja bazowa CPI', w:'Zmiana cen koszyka konsumenta bez żywności i energii (najbardziej zmiennych). Pokazuje trwałą presję cenową.', u:HAWK, e:'Jedna z 2–3 najważniejszych publikacji miesiąca. Dla Fed ważniejsza niż CPI ogólne. W USA publikacja 14:30 (13:30 w okresie przesunięcia czasu) rusza też DAX.'},
+  {rx:/\bcpi\b|consumer price/i, n:'Inflacja CPI', w:'Zmiana cen koszyka dóbr i usług kupowanych przez konsumentów (m/m = do poprzedniego miesiąca, y/y = rok do roku).', u:HAWK, e:'Bezpośrednio wpływa na decyzje banku centralnego o stopach. Dane z Niemiec (German Prelim CPI) przychodzą przed danymi dla strefy euro i często je zapowiadają.'},
+  {rx:/\bppi\b|producer price/i, n:'Inflacja producencka PPI', w:'Zmiana cen, które dostają producenci. Wyprzedza inflację konsumencką, bo koszty firm przechodzą potem na ceny w sklepach.', u:HAWK, e:'Mniejszy wpływ niż CPI. Rynek zwraca uwagę głównie przy dużym zaskoczeniu.'},
+  {rx:/inflation expectations/i, n:'Oczekiwania inflacyjne', w:'Jakiej inflacji spodziewają się konsumenci w ciągu roku i 5 lat (ankieta Uniwersytetu Michigan).', u:HAWK, e:'Fed obawia się „odkotwiczenia” oczekiwań, więc wzrost wzmacnia jastrzębi ton.'},
+  // ---------- USA: rynek pracy ----------
+  {rx:/non-?farm employment change|nonfarm payrolls|\bnfp\b/i, n:'NFP – nowe miejsca pracy poza rolnictwem', w:'Ile etatów przybyło w USA w poprzednim miesiącu (raport rządowy, pierwszy piątek miesiąca). Razem z NFP wychodzą stopa bezrobocia i płace.', u:GROW, e:'Najbardziej znana publikacja miesiąca: duża zmienność na wszystkich rynkach. O 14:30 DAX, US100 i US500 potrafią w minutę przejść kilkadziesiąt punktów w obie strony. Rewizje poprzednich miesięcy też się liczą.'},
+  {rx:/adp/i, n:'ADP – zatrudnienie w sektorze prywatnym', w:'Szacunek zmiany zatrudnienia od firmy płacowej ADP, dwa dni przed NFP.', u:GROW, e:'Traktowany jako zapowiedź NFP, choć często się z nim rozjeżdża. Średni wpływ.'},
+  {rx:/unemployment claims|jobless claims/i, n:'Wnioski o zasiłek dla bezrobotnych', w:'Ile osób złożyło pierwszy raz wniosek o zasiłek w ostatnim tygodniu. Najszybszy, cotygodniowy sygnał z rynku pracy (czwartek 14:30).', u:GROW_INV, e:'Zwykle mały wpływ, chyba że wyraźny trend wzrostowy (sygnał spowolnienia).'},
+  {rx:/unemployment rate/i, n:'Stopa bezrobocia', w:'Odsetek osób aktywnych zawodowo bez pracy.', u:GROW_INV, e:'W USA wychodzi razem z NFP. Wzrost bezrobocia to sygnał spowolnienia i zwiększa szanse na obniżki stóp.'},
+  {rx:/claimant count|unemployment change/i, n:'Zmiana liczby bezrobotnych', w:'O ile zmieniła się liczba zarejestrowanych bezrobotnych w miesiącu.', u:GROW_INV, e:'Średni wpływ na lokalną walutę i indeks.'},
+  {rx:/average hourly earnings|average earnings|wage/i, n:'Płace', w:'Dynamika wynagrodzeń. Szybki wzrost płac napędza inflację w usługach.', u:HAWK, e:'Ważna dla banku centralnego jako źródło przyszłej inflacji.'},
+  {rx:/jolts/i, n:'JOLTS – wolne miejsca pracy', w:'Liczba ofert pracy w USA. Pokazuje popyt firm na pracowników.', u:GROW, e:'Średni wpływ. Spadek ofert = rynek pracy się schładza, co Fed widzi jako mniejszą presję płacową.'},
+  {rx:/employment cost index/i, n:'Indeks kosztów zatrudnienia (ECI)', w:'Kwartalna zmiana całkowitych kosztów pracy (płace i świadczenia).', u:HAWK, e:'Fed uważa go za najlepszą miarę presji płacowej.'},
+  {rx:/employment change/i, n:'Zmiana zatrudnienia', w:'Ile miejsc pracy przybyło lub ubyło w miesiącu.', u:GROW, e:'Duży wpływ na walutę danego kraju (np. CAD, AUD).'},
+  // ---------- Aktywność gospodarcza ----------
+  {rx:/\bgdp\b/i, n:'PKB', w:'Wzrost gospodarki: wartość wszystkiego, co kraj wyprodukował (q/q = do poprzedniego kwartału). Pierwszy szacunek (Advance/Prelim/Flash) rusza rynkiem najbardziej, kolejne to rewizje.', u:GROW, e:'Dwa kwartały spadku z rzędu to techniczna recesja. Dane z Niemiec ważne dla DAX i EUR.'},
+  {rx:/ism manufacturing/i, n:'ISM przemysł', w:'Ankieta wśród menedżerów zakupów w przemyśle USA. Powyżej 50 = przemysł rośnie, poniżej 50 = kurczy się. Ważne też podindeksy: ceny i zatrudnienie.', u:GROW, e:'Pierwszy duży odczyt miesiąca (1. dzień roboczy, 16:00). Średni do wysokiego wpływ.'},
+  {rx:/ism services|ism non-manufacturing/i, n:'ISM usługi', w:'Ankieta menedżerów w usługach USA (ok. 70% gospodarki). Powyżej 50 = wzrost.', u:GROW, e:'Często ważniejszy niż ISM przemysłu, bo usługi to większość gospodarki USA. Podindeks cen pokazuje inflację usług.'},
+  {rx:/ifo/i, n:'Indeks ifo – klimat biznesowy w Niemczech', w:'Ankieta wśród ok. 9 tys. niemieckich firm: ocena obecnej sytuacji i oczekiwania na 6 miesięcy.', u:GROW, e:'Jeden z najważniejszych odczytów dla DAX i EUR. Wychodzi o 10:00, w trakcie sesji Xetra.'},
+  {rx:/zew/i, n:'ZEW – nastroje analityków', w:'Ankieta wśród analityków i inwestorów: jak widzą niemiecką gospodarkę za 6 miesięcy. Dodatnie = optymizm.', u:GROW, e:'Wychodzi o 11:00. Często porusza DAX, bo to pierwszy odczyt nastrojów w miesiącu.'},
+  {rx:/sentix/i, n:'Sentix – nastroje inwestorów', w:'Ankieta nastrojów inwestorów w strefie euro, na początku miesiąca.', u:GROW, e:'Mały wpływ, ale to najwcześniejszy sygnał nastrojów w miesiącu.'},
+  {rx:/gfk/i, n:'GfK – nastroje konsumentów w Niemczech', w:'Ankieta: jak niemieccy konsumenci oceniają przyszłą sytuację i chęć wydawania.', u:GROW, e:'Mały do średniego wpływ na DAX i EUR.'},
+  {rx:/empire state|philly fed|richmond|chicago pmi|kansas/i, n:'Regionalny indeks przemysłu USA', w:'Ankieta w firmach z jednego regionu USA (np. Nowy Jork, Filadelfia). Powyżej zera = poprawa.', u:GROW, e:'Mały do średniego wpływ. Zapowiada ogólnokrajowy ISM.'},
+  {rx:/flash .*pmi|pmi/i, n:'PMI – indeks menedżerów zakupów', w:'Ankieta wśród menedżerów zakupów: zamówienia, produkcja, zatrudnienie, ceny. Powyżej 50 = branża rośnie, poniżej 50 = kurczy się. „Flash” = wstępny odczyt w drugiej połowie miesiąca, najważniejszy.', u:GROW, e:'Flash PMI z Niemiec i Francji (9:15–9:30) potrafią mocno ruszyć DAX na otwarciu. PMI z Chin działają na surowce, AUD i europejskie spółki eksportowe.'},
+  {rx:/retail sales/i, n:'Sprzedaż detaliczna', w:'Zmiana wartości sprzedaży w sklepach. „Core” = bez samochodów (bardziej stabilny odczyt). Konsumpcja to ok. 70% PKB USA.', u:GROW, e:'Wysoki wpływ w USA. Mocny konsument = gospodarka odporna, ale też dłużej wysokie stopy.'},
+  {rx:/durable goods/i, n:'Zamówienia na dobra trwałe', w:'Zamówienia na produkty o żywotności powyżej 3 lat (maszyny, samoloty). Pokazuje skłonność firm do inwestycji.', u:GROW, e:'Bardzo zmienne (duże zamówienia Boeinga), dlatego rynek patrzy na „Core” bez transportu.'},
+  {rx:/industrial production|factory orders|manufacturing production/i, n:'Produkcja i zamówienia w przemyśle', w:'Zmiana produkcji lub nowych zamówień w fabrykach.', u:GROW, e:'Dla Niemiec (gospodarka przemysłowa) ważniejsze niż dla USA. Średni wpływ na DAX.'},
+  {rx:/consumer confidence|consumer sentiment|uom|michigan/i, n:'Nastroje konsumentów', w:'Ankieta: jak konsumenci oceniają obecną sytuację i przyszłość (CB = Conference Board, UoM = Uniwersytet Michigan).', u:GROW, e:'Średni wpływ. Zapowiada wydatki konsumentów.'},
+  {rx:/building permits|housing starts|home sales|house price|hpi/i, n:'Rynek nieruchomości', w:'Pozwolenia na budowę, rozpoczęte budowy, sprzedaż domów lub ceny domów.', u:GROW, e:'Zwykle mały wpływ. Pokazuje, jak gospodarka znosi wysokie stopy (kredyty hipoteczne).'},
+  {rx:/trade balance|current account/i, n:'Bilans handlowy', w:'Różnica między eksportem a importem.', u:'Wyżej niż prognoza (większa nadwyżka lub mniejszy deficyt) zwykle wspiera walutę.', e:'Zwykle mały wpływ. Dane z Chin działają na surowce i europejskich eksporterów.'},
+  {rx:/personal (income|spending)/i, n:'Dochody i wydatki osobiste', w:'Zmiana dochodów i wydatków gospodarstw domowych w USA. Wychodzi razem z PCE.', u:GROW, e:'Mały wpływ, uwaga skupia się na PCE.'},
+  {rx:/productivity|unit labor cost/i, n:'Wydajność i koszty pracy', w:'Wydajność pracy i koszt pracy na jednostkę produkcji (kwartalnie).', u:'Wyższe koszty pracy = presja inflacyjna.', e:'Mały wpływ.'},
+  {rx:/tankan/i, n:'Tankan – ankieta Banku Japonii', w:'Kwartalna ankieta nastrojów dużych japońskich firm.', u:GROW, e:'Ważna dla JPY i Nikkei. Wpływa na oczekiwania wobec BoJ.'},
+  // ---------- Surowce ----------
+  {rx:/crude oil inventories|crude inventories/i, n:'Zapasy ropy w USA (EIA)', w:'Cotygodniowa zmiana zapasów ropy w magazynach USA (środa 16:30).', u:'Wyżej niż prognoza (zapasy rosną bardziej): mniejszy popyt lub większa podaż, więc ropa zwykle tanieje. Niższe zapasy podnoszą cenę.', e:'Duży wpływ na ropę (WTI, Brent) i CAD, mały na indeksy.'},
+  {rx:/natural gas storage/i, n:'Zapasy gazu w USA', w:'Cotygodniowa zmiana zapasów gazu ziemnego (czwartek 16:30).', u:'Większy przyrost zapasów niż prognoza zwykle obniża cenę gazu.', e:'Wpływ głównie na gaz ziemny.'},
+  // ---------- Banki centralne ----------
+  {rx:/fomc meeting minutes|meeting minutes|monetary policy meeting accounts|mpc.*minutes/i, n:'Protokół z posiedzenia banku centralnego', w:'Szczegółowy zapis dyskusji z poprzedniego posiedzenia (Fed publikuje go 3 tygodnie później).', u:'Ton jastrzębi (więcej członków za wyższymi stopami) zwykle umacnia walutę i ciąży indeksom. Gołębi działa odwrotnie.', e:'Średni wpływ. Rynek szuka wskazówek co do kolejnych decyzji.'},
+  {rx:/economic projections|dot plot/i, n:'Projekcje Fed („dot plot”)', w:'Prognozy członków Fed: PKB, inflacja, bezrobocie i ścieżka stóp (każda kropka to jeden członek). Co drugie posiedzenie.', u:'Kropki wyżej niż oczekiwano = mniej obniżek, scenariusz jastrzębi.', e:'Często porusza rynek bardziej niż sama decyzja.'},
+  {rx:/press conference|konferencj/i, n:'Konferencja prasowa po decyzji', w:'Prezes banku centralnego tłumaczy decyzję i odpowiada na pytania.', u:'Liczy się ton: sygnały kolejnych ruchów, ocena inflacji i gospodarki.', e:'Często większa zmienność niż przy samym komunikacie. Ruchy potrafią się kilka razy odwracać.'},
+  {rx:/speaks|testifies|speech/i, n:'Wystąpienie bankiera centralnego', w:'Przemówienie, wywiad lub zeznania przed parlamentem. Najważniejsze są wystąpienia prezesów (Fed, EBC, BoE, BoJ).', u:'Sugestia wyższych stóp na dłużej (jastrzębio) = waluta w górę, indeksy w dół. Sugestia obniżek (gołębio) = odwrotnie.', e:'Wpływ zależy od osoby i od tego, czy mówi o polityce pieniężnej. Prezes = wysoki wpływ.'},
+  {rx:/beige book/i, n:'Beżowa Księga Fed', w:'Raport o sytuacji gospodarczej w 12 okręgach Fed, oparty na rozmowach z firmami.', u:'Opisowy raport, bez prognozy.', e:'Zwykle mały wpływ.'},
+  {rx:/funds rate|fomc statement|main refinancing|deposit facility|official bank rate|policy rate|cash rate|overnight rate|interest rate decision|bank rate|monetary policy statement/i, n:'Decyzja w sprawie stóp procentowych', w:'Bank centralny ustala główną stopę procentową, czyli koszt pieniądza w gospodarce. Do decyzji dołączany jest komunikat z uzasadnieniem.', u:'Podwyżka albo pozostawienie stóp, gdy rynek czekał na obniżkę = waluta w górę, indeksy w dół. Obniżka lub zapowiedź obniżek = waluta w dół, indeksy zwykle w górę. Liczy się różnica względem oczekiwań i zmiany w komunikacie, nie sama decyzja.', e:'Najważniejsze wydarzenie dla danej waluty. Decyzje Fed i EBC ruszają wszystkie indeksy na świecie.'},
+  {rx:/bond auction|auction/i, n:'Aukcja obligacji', w:'Rząd sprzedaje nowe obligacje. Ważny jest popyt (bid-to-cover) i rentowność względem rynku.', u:'Słaby popyt (wyższa rentowność niż przed aukcją) = presja na wzrost rentowności, co zwykle ciąży akcjom.', e:'Zwykle mały wpływ. Aukcje 10- i 30-letnich obligacji USA mogą ruszyć rynkiem.'},
+  {rx:/bank holiday|holiday/i, n:'Święto bankowe', w:'Dzień wolny w danym kraju: banki i część rynków nie działają.', u:'', e:'Mniejsza płynność w walucie tego kraju. Ruchy bywają nieregularne.'}
+];
+
+const KB_TYPE = {
+  'exp:':   {n:'Wygasanie kontraktów na DAX i Euro Stoxx 50', w:'Kontrakty terminowe (FDAX, FESX) i opcje na indeks mają datę ważności. W dniu wygaśnięcia rozlicza się je po cenie ustalonej na aukcji: DAX o 13:00 z aukcji Xetra. Kwartalnie (marzec, czerwiec, wrzesień, grudzień) wygasają kontrakty, co miesiąc opcje.',
+             u:'', e:'W dni wygaśnięcia, zwłaszcza kwartalne, cena przed 13:00 bywa „przyciągana” do poziomów z dużą liczbą otwartych opcji (tzw. pinning). Po rozliczeniu zmienność często rośnie. Na wykresach kontraktów ciągłych może pojawić się luka (gap) przy zmianie serii.'},
+  'roll:':  {n:'Rollover (przewinięcie) kontraktu', w:'Rollover to przejście z kontraktu, który wkrótce wygasa, na kolejny (np. z grudniowego na marcowy). Większość traderów zamyka stary i otwiera nowy kontrakt mniej więcej tydzień przed wygaśnięciem, więc wolumen przenosi się na następną serię.',
+             u:'', e:'Kolejna seria ma inną cenę (różnica wynika ze stóp procentowych i dywidend), więc na kontrakcie ciągłym widać skok ceny. CFD u brokera: przy przewinięciu cena CFD się przesuwa, a broker koryguje saldo otwartych pozycji o różnicę. Wynik na rachunku nie powinien się zmienić, ale stopy i zlecenia oczekujące warto sprawdzić. W dniach rolloveru spread na starej serii może się poszerzyć.'},
+  'qw:':    {n:'Quad witching (cztery czarownice)', w:'Kwartalny dzień, w którym jednocześnie wygasają kontrakty terminowe na indeksy, opcje na indeksy, opcje na akcje i kontrakty na pojedyncze akcje. Wypada w trzeci piątek marca, czerwca, września i grudnia.',
+             u:'', e:'Jeden z najwyższych wolumenów w roku, zwłaszcza na zamknięciu sesji w USA (22:00 czasu polskiego). Rozliczenie kontraktów po cenach otwarcia (9:30 ET) może dać nerwowe otwarcie Wall Street. Tego samego dnia jest też rebalancing indeksów S&P, co dokłada przepływów.'},
+  'rollus:':{n:'Rollover kontraktów na indeksy USA', w:'Przejście wolumenu ES, NQ i YM na kolejny kwartał. CME wyznacza roll date 8 dni przed wygaśnięciem.', u:'', e:'Kontrakt ciągły przeskakuje na nową serię. CFD na US500, US100 i US30 brokerzy przewijają zwykle w tym okresie, z korektą salda pozycji.'},
+  'opex:':  {n:'OPEX – wygasanie opcji w USA', w:'Comiesięczne wygasanie opcji na akcje, ETF i indeksy (trzeci piątek miesiąca).', u:'', e:'Przed wygaśnięciem duzi gracze zabezpieczają pozycje opcyjne (hedging gamma), co potrafi tłumić albo wzmacniać ruchy indeksów. Po OPEX rynek często „uwalnia się” i zmienia charakter ruchu.'},
+  'vix:':   {n:'Wygasanie VIX', w:'VIX to indeks oczekiwanej zmienności S&P 500 na 30 dni („indeks strachu”). Kontrakty i opcje na VIX wygasają w środę, 30 dni przed wygaśnięciem opcji na S&P 500 w kolejnym miesiącu.', u:'', e:'Zwykle mały wpływ na indeksy. Czasem nerwowe otwarcie, bo rozliczenie liczy się z cen opcji na otwarciu.'},
+  'ftse:':  {n:'Wygasanie kontraktów i opcji na FTSE 100', w:'Rozliczenie po cenie z aukcji na giełdzie londyńskiej o 10:15 czasu Londynu (EDSP).', u:'', e:'Zwiększona aktywność na FTSE przed 10:15.'},
+  'fw20:':  {n:'Wygasanie FW20', w:'Kontrakty terminowe na WIG20 wygasają w trzeci piątek miesiąca kwartalnego. To ostatni dzień notowania serii.', u:'', e:'Na GPW w dni wygaśnięcia zdarzają się duże zlecenia na fixingu i nietypowe ruchy WIG20.'},
+  'sq:':    {n:'SQ – rozliczenie opcji i kontraktów w Japonii', w:'Special Quotation: cena rozliczeniowa liczona z kursów otwarcia wszystkich spółek z Nikkei 225, w drugi piątek miesiąca.', u:'', e:'Duże przepływy na otwarciu w Tokio. Kwartalne SQ (marzec, czerwiec, wrzesień, grudzień) mają największy wpływ.'},
+  'cl:':    {n:'Wygasanie kontraktu na ropę WTI', w:'Ostatni dzień notowania miesięcznego kontraktu na ropę (CL). Kto go trzyma, musi przejąć fizyczną dostawę, więc spekulanci zamykają pozycje wcześniej.', u:'', e:'W ostatnich dniach możliwe nietypowe ruchy starej serii. CFD na ropę broker przewija kilka dni wcześniej, z korektą salda (różnica między seriami bywa duża).'},
+  'hol:':   {n:'Giełda zamknięta', w:'Dzień bez sesji na danej giełdzie.', u:'', e:'Gdy zamknięta jest Wall Street, w Europie po 15:30 zwykle brakuje płynności i impulsów. Przy zamkniętej giełdzie lokalnej CFD na jej indeks może być nienotowany albo mieć szerokie spready.'},
+  'early:': {n:'Skrócona sesja', w:'Giełda kończy handel wcześniej niż zwykle, zwykle przed świętami.', u:'', e:'Mała płynność i szerokie spready w końcówce dnia. Spółki i indeksy często stoją w miejscu.'},
+  'dst':    {n:'Zmiana czasu', w:'USA i Europa zmieniają czas w różnych terminach, więc przez 2–3 tygodnie w marcu i tydzień jesienią różnica między Nowym Jorkiem a Warszawą wynosi 5 godzin zamiast 6.', u:'', e:'W tym okresie wszystko z USA przychodzi godzinę wcześniej czasu polskiego: dane makro o 13:30, otwarcie Wall Street o 14:30, decyzja Fed o 19:00. Sprawdź godziny w swoich systemach i wskaźnikach sesyjnych.'},
+  'fomcs:': {n:'Posiedzenie strategiczne Fed', w:'Posiedzenie poświęcone ramom polityki, bez decyzji o stopach.', u:'', e:'Zwykle mały wpływ.'},
+  'fomc':   {n:'Fed – decyzja ws. stóp procentowych', w:'FOMC (Federalny Komitet Otwartego Rynku) ustala stopę funduszy federalnych 8 razy w roku. Komunikat o 14:00 czasu Nowego Jorku (zwykle 20:00 w Polsce), 30 minut później konferencja prezesa.', u:'Liczy się różnica względem oczekiwań rynku, zmiany w komunikacie i ton konferencji. Jastrzębio = USD w górę, indeksy w dół. Gołębio = odwrotnie.', e:'Najważniejsze wydarzenie dla rynków globalnych. US100, US500 i złoto reagują natychmiast. DAX jest już wtedy po sesji Xetra, ale FDAX i CFD handlują i reagują. Duże ruchy w obie strony do końca konferencji.'},
+  'ecb':    {n:'EBC – decyzja ws. stóp procentowych', w:'Europejski Bank Centralny ustala stopy dla strefy euro (najważniejsza jest stopa depozytowa). Komunikat 14:15, konferencja prezes EBC 14:45.', u:'Jastrzębio (mniej obniżek, wyższe stopy) = EUR w górę, DAX w dół. Gołębio = odwrotnie.', e:'Najważniejsze wydarzenie dla DAX i Euro Stoxx 50 spośród banków centralnych. Konferencja często daje więcej ruchu niż sam komunikat.'},
+  'boe':    {n:'Bank Anglii – decyzja ws. stóp procentowych', w:'Komitet Polityki Pieniężnej (MPC) BoE ustala stopę dla Wielkiej Brytanii, 8 razy w roku, o 12:00 czasu Londynu. Ważny jest też rozkład głosów 9 członków.', u:'Jastrzębio = GBP w górę, FTSE 100 w dół (choć słaby funt pomaga FTSE, bo spółki zarabiają za granicą).', e:'Główne wydarzenie dla GBP i FTSE.'},
+  'boj':    {n:'Bank Japonii – decyzja ws. stóp procentowych', w:'BoJ decyduje o stopach i polityce wobec rentowności obligacji. Godzina nie jest stała, zwykle ok. południa w Tokio (rano w Polsce).', u:'Jastrzębio (podwyżka) = JPY w górę, Nikkei w dół.', e:'Duży wpływ na JPY i Nikkei. Gwałtowne umocnienie jena potrafi wywołać globalną wyprzedaż (zamykanie pozycji carry trade, jak w sierpniu 2024).'},
+  'rpp':    {n:'RPP – decyzja ws. stóp procentowych w Polsce', w:'Rada Polityki Pieniężnej NBP ustala stopę referencyjną. Komunikat zwykle po południu, konferencja prezesa NBP następnego dnia.', u:'Jastrzębio (wyższe stopy niż oczekiwano) = PLN w górę. Gołębio = PLN w dół.', e:'Główne wydarzenie dla PLN i WIG20. Banki mają w WIG20 dużą wagę, a wyższe stopy zwykle poprawiają ich marże.'},
+  'ern:':   {n:'Wyniki finansowe spółki', w:'Raport kwartalny: przychody, zysk na akcję (EPS) i prognozy na kolejne kwartały (guidance). Prognoza EPS to średnia oczekiwań analityków.', u:'Wynik lepszy od prognozy nie zawsze oznacza wzrost kursu: rynek reaguje głównie na guidance i na to, co już było w cenie.', e:''}
+};
+
+const GLOSSARY = [
+  ['Prognoza, odczyt, poprzednio', 'Prognoza to mediana oczekiwań ekonomistów. Rynek reaguje na różnicę między odczytem a prognozą (zaskoczenie), nie na sam odczyt. „Poprzednio” bywa rewidowane: zmiana poprzedniego miesiąca też się liczy.'],
+  ['Wpływ (high / medium / low)', 'Ocena Forex Factory, jak mocno dana publikacja zwykle rusza walutą. Wysoki = typowo duży ruch w minutach po publikacji, poszerzone spready i poślizgi na zleceniach.'],
+  ['Jastrzębi / gołębi', 'Jastrzębi (hawkish) = za wyższymi stopami, walka z inflacją. Gołębi (dovish) = za niższymi stopami, wsparcie wzrostu. Jastrzębie sygnały zwykle umacniają walutę i ciążą akcjom.'],
+  ['Wygasanie (expiry)', 'Dzień, w którym seria kontraktów lub opcji przestaje być notowana i jest rozliczana po cenie ustalonej na aukcji. Kwartalne wygasania (marzec, czerwiec, wrzesień, grudzień) są największe.'],
+  ['Rollover', 'Przejście z wygasającej serii kontraktu na kolejną. Na kontraktach: ręczne zamknięcie starej i otwarcie nowej serii. Na CFD robi to broker: cena CFD przesuwa się o różnicę między seriami, a saldo otwartej pozycji jest o tę różnicę korygowane.'],
+  ['Quad witching', 'Kwartalny dzień w USA, w którym jednocześnie wygasają kontrakty i opcje na indeksy i akcje. Bardzo duży wolumen, zwłaszcza na zamknięciu.'],
+  ['Pinning', 'Przyciąganie ceny do poziomu (strike), na którym otwartych jest dużo opcji, w godzinach przed wygaśnięciem.'],
+  ['Waga w indeksie', 'Udział spółki w indeksie ważonym kapitalizacją. Ruch akcji × waga ≈ ruch indeksu: Apple z wagą 9% po spadku o 5% to ok. −0,45% dla Nasdaq 100.'],
+  ['Przed otwarciem / po zamknięciu', 'Spółki z USA publikują wyniki przed sesją (ok. 12:00–13:30 czasu polskiego) albo po sesji (ok. 22:05). Wyniki po sesji widać od razu na kontraktach NQ/ES i CFD na US100/US500, a rano w Europie na DAX.'],
+  ['Zmiana czasu', 'Przez kilka tygodni w roku USA i Europa mają inny czas letni i zimowy: wszystko z USA przychodzi godzinę wcześniej czasu polskiego.'],
+  ['SOQ', 'Special Opening Quotation: cena rozliczeniowa kontraktów na indeksy USA liczona z cen otwarcia wszystkich spółek z indeksu.']
+];
+
+function explain(e){
+  const pre = /pc:/.test(e.key) ? null : Object.keys(KB_TYPE).find(p => e.key.startsWith(p));
+  let base = pre ? KB_TYPE[pre] : KB.find(x => x.rx.test(e.title));
+  if (!base && (e.cat === 'wyniki')) base = KB_TYPE['ern:'];
+  if (!base && e.src === 'Forex Factory') base = {n:'Publikacja z kalendarza makro', w:'Tej publikacji nie ma jeszcze w bazie opisów.',
+    u:'Ogólna zasada: rynek reaguje na różnicę między odczytem a prognozą. Lepsze dane gospodarcze zwykle umacniają walutę danego kraju.', e:'Siłę typowej reakcji pokazuje kolor wpływu (czerwony = wysoki).'};
+  if (!base) return null;
+  const r = {...base}, extra = [];
+  // Wyniki: waga w indeksach i przeliczenie wpływu
+  if (e.cat === 'wyniki' || e.key.startsWith('ern:')){
+    const sym = (e.key.match(/^ern:([A-Z.]+):/) || [])[1] || Object.keys(WEIGHTS).find(t => new RegExp('\\b' + t + '\\b').test(e.title));
+    const w = sym && WEIGHTS[sym];
+    if (w){
+      r.n = w.n + ' – wyniki finansowe'; extra.push(w.s);
+      const p = [];
+      if (w.ndx) p.push(`Nasdaq 100 (US100): ok. ${String(w.ndx).replace('.', ',')}% (szacunek, ${W_DATE.ndx})`);
+      if (w.spx) p.push(`S&P 500 (US500): ok. ${String(w.spx).replace('.', ',')}% (${W_DATE.spx})`);
+      if (p.length) extra.push('Waga w indeksach: ' + p.join(', ') + '.');
+      const top = Math.max(w.ndx || 0, w.spx || 0), mv = 5, imp = (top * mv / 100).toFixed(2).replace('.', ',');
+      r.e = `Ruch akcji o ±${mv}% po wynikach to ok. ±${imp}% dla ${w.ndx >= (w.spx || 0) ? 'Nasdaq 100' : 'S&P 500'} tylko z samej tej spółki. Reakcja przenosi się na całą branżę i nastroje, więc realny wpływ bywa większy.` +
+        (e.info && /po zamknięciu/i.test(e.info) ? ' Raport po zamknięciu sesji (ok. 22:05): reakcja od razu na kontraktach NQ/ES i CFD na US100/US500, a rano przenosi się na otwarcie w Europie, w tym DAX.' :
+         e.info && /przed otwarciem/i.test(e.info) ? ' Raport przed sesją w USA: reakcja widoczna na kontraktach w trakcie sesji europejskiej, przed otwarciem Wall Street o 15:30.' : '');
+    }
+    const d = DAX_W.find(([rx]) => rx.test(e.title));
+    if (d){
+      r.n = d[1] + ' – wyniki finansowe';
+      extra.push(`Waga w DAX: ok. ${String(d[2]).replace('.', ',')}% (${W_DATE.dax}). Ruch akcji o ±5% to ok. ±${(d[2] * 5 / 100).toFixed(2).replace('.', ',')}% dla DAX tylko z samej tej spółki.`);
+      r.e = 'Niemieckie spółki publikują zwykle rano przed sesją (7:00–7:30), więc reakcję widać już na otwarciu Xetra o 9:00, a wcześniej na FDAX i CFD.';
+    }
+  }
+  if (extra.length) r.x = extra;
+  return r;
+}
+
+function explainHTML(e){
+  const x = explain(e); if (!x) return '';
+  const sec = (h, t) => t ? `<div style="margin-top:10px"><small style="text-transform:uppercase;letter-spacing:.05em">${h}</small><div style="margin-top:2px">${esc(t)}</div></div>` : '';
+  return `<div class="card" style="background:var(--card2);margin-top:12px"><b>${esc(x.n)}</b>
+    ${sec('Co to jest', x.w)}${(x.x || []).map(t => `<div style="margin-top:6px">${esc(t)}</div>`).join('')}
+    ${sec(e.src === 'Forex Factory' ? 'Jak czytać odczyt' : 'Jak czytać', x.u)}${sec('Na co wpływa', x.e)}</div>`;
+}
+function openGlossary(){
+  sheet(`<h2>Słownik pojęć</h2>${GLOSSARY.map(([h, t]) => `<div class="card"><b>${esc(h)}</b><div style="margin-top:4px;color:var(--mut)">${esc(t)}</div></div>`).join('')}
+    <p><small>Opisy mają charakter edukacyjny. Reakcje rynku opisują typowe zachowanie, nie gwarancję.</small></p>`);
 }
 
 /* ---------- Arkusze ---------- */
@@ -808,6 +981,7 @@ function openEvent(key){
     <h2 style="margin-top:10px">${esc(e.title)}</h2>
     <p>🗓 ${fmtTime(e)}${e.allDay ? ' (cały dzień)' : ''}${!e.allDay && e.start > Date.now() ? ' · za ' + countdown(e.start - Date.now()) : ''}</p>
     ${e.info ? `<p style="white-space:pre-wrap;color:var(--mut)">${esc(e.info)}</p>` : ''}
+    ${explainHTML(e)}
     <p><small>Źródło: ${esc(e.src)}</small></p>
     <div class="row" style="margin-top:14px">
       <button class="btn acc" id="toCal">+ Do kalendarza</button>

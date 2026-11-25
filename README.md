@@ -33,6 +33,17 @@ Ograniczenia, które warto znać:
 - Daty wyników bez klucza są tylko dla spółek z USA (Nasdaq). Dla DAX, FTSE, WIG20 itd.: link ICS z kalendarza finansowego spółki albo wpis ręczny.
 - Święta i reguły wygasania są liczone z reguł, a jednorazowych wyjątków (np. dzień żałoby narodowej) giełdy ogłaszają osobno.
 
+## Opisy wydarzeń
+
+Kliknięcie wydarzenia pokazuje opis: co to jest, jak czytać odczyt względem prognozy i na co wpływa. Opisy obejmują:
+- **Dane makro:** inflacja, rynek pracy, PMI/ISM, ifo/ZEW, PKB, sprzedaż, zapasy ropy i inne.
+- **Banki centralne:** decyzje, konferencje, protokoły, wystąpienia.
+- **Wygasanie i rollover:** w tym jak broker koryguje CFD przy przewinięciu.
+- **Sesje:** święta, skrócone sesje, zmiana czasu.
+- **Wyniki spółek:** z wagą w Nasdaq 100, S&P 500 albo DAX i przeliczeniem, ile ruch akcji daje dla indeksu.
+
+W Ustawieniach jest też słownik pojęć. Wagi spółek są orientacyjne (`WEIGHTS`, `DAX_W` w `ui/index.html`) i warto je aktualizować co kwartał.
+
 ## Filtry i przypomnienia
 
 - Filtry: rynki, kategorie, minimalny wpływ, waluty, wystąpienia bankierów, ukrywanie po słowach w tytule i ukrywanie pojedynczych wydarzeń. Przycisk **● High** w nagłówku szybko zawęża wszystko do wysokiego wpływu.
