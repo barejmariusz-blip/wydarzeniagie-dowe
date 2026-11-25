@@ -1,8 +1,10 @@
 # Wydarzenia Giełdowe
 
-Agregator wydarzeń rynkowych dla tradera DAX na Androida i Windows. Ten sam interfejs w obu wersjach (`ui/index.html`).
+Agregator wydarzeń rynkowych na Androida i Windows: indeksy, waluty i surowce, nie tylko DAX. Ten sam interfejs w obu wersjach (`ui/index.html`).
 
-Zbiera wszystko w jeden kalendarz: dane makro, decyzje banków centralnych, wygasanie FDAX i opcji, rollover, święta giełdowe, skrócone sesje, zmianę czasu USA/Europa i wyniki spółek. Filtrujesz, co cię interesuje, i dostajesz przypomnienia.
+Zbiera wszystko w jeden kalendarz: dane makro, decyzje banków centralnych, wygasanie kontraktów i opcji, rollover, święta giełdowe, skrócone sesje, zmianę czasu USA/Europa i wyniki spółek.
+
+Rynki (każdy włączany osobno w Filtrach): Niemcy / strefa euro (DAX, Euro Stoxx 50), USA (S&P 500, Nasdaq 100, Dow), Wielka Brytania (FTSE 100), Polska (WIG20), Szwajcaria (SMI), Japonia (Nikkei 225), ropa WTI. Filtrujesz, co cię interesuje, i dostajesz przypomnienia.
 
 ## Pobieranie
 
@@ -16,9 +18,10 @@ Obie wersje budują się automatycznie po każdym pushu na `main`.
 | Źródło | Klucz | Co daje | Zasięg |
 |---|---|---|---|
 | **Forex Factory** (feed Fair Economy) | brak | Wszystkie publikacje makro z wpływem (high/medium/low), prognozą i poprzednim odczytem, decyzje i wystąpienia bankierów, święta bankowe | bieżący tydzień (+ następny, jeśli feed go poda) |
-| **Kalendarze Fed i EBC** | wbudowane | Decyzje i konferencje FOMC i EBC | grudzień 2026 – grudzień 2027 |
-| **Reguły Eurex** | liczone | Wygasanie FDAX i opcji na DAX (3. piątek, 13:00, kwartały oznaczone jako high), rollover ok. tydzień przed | dowolnie daleko |
-| **Reguły giełd** | liczone | Xetra/Eurex zamknięte, święta i skrócone sesje NYSE | dowolnie daleko |
+| **Kalendarze banków centralnych** | wbudowane | Decyzje Fed, EBC, BoE i BoJ (z konferencjami Fed i EBC) | grudzień 2026 – grudzień 2027 |
+| **Kalendarz NBP** | wbudowane | Decyzja RPP | grudzień 2026 (harmonogram na 2027 jeszcze nieopublikowany) |
+| **Reguły giełd – wygasanie** | liczone | Eurex: FDAX, FESX i opcje, rollover. CME/Cboe: quad witching ES/NQ/YM, rollover, miesięczny OPEX, VIX. ICE: FTSE 100. GPW: FW20. JPX: Nikkei SQ (2. piątek). Ropa WTI (CL) | dowolnie daleko |
+| **Reguły giełd – sesje** | liczone | Dni bez sesji na Xetra/Eurex, NYSE, LSE, GPW, SIX i w Tokio, skrócone sesje w USA i Londynie | dowolnie daleko |
 | **Zmiana czasu** | liczone | Okresy, w których dane z USA wychodzą o 13:30, a Wall Street otwiera się o 14:30 | dowolnie daleko |
 | **Nasdaq** | brak | Daty wyników spółek z USA z listy tickerów (domyślnie mega capy) | 45 dni |
 | **ICS** | brak | Dowolny kalendarz online, np. kalendarze finansowe spółek z DAX ze stron IR | zależnie od kalendarza |
@@ -26,12 +29,13 @@ Obie wersje budują się automatycznie po każdym pushu na `main`.
 
 Ograniczenia, które warto znać:
 - Forex Factory podaje tylko bieżący tydzień. Dalej w przód widać tylko to, co liczone, i posiedzenia Fed/EBC. Feed blokuje zbyt częste pobieranie, więc apka odświeża go najwyżej co godzinę, a ręcznie najwyżej co 5 minut.
-- Daty posiedzeń Fed i EBC są wpisane w kodzie (`FOMC`, `ECB` w `ui/index.html`). Gdy banki opublikują kalendarz na 2028, trzeba je dopisać.
-- Darmowego źródła dat wyników dla całego DAX bez klucza nie ma. Rozwiązanie: link ICS z kalendarza finansowego danej spółki albo wpis ręczny.
+- Daty posiedzeń banków centralnych są wpisane w kodzie (`FOMC`, `ECB`, `BOE`, `BOJ`, `RPP` w `ui/index.html`). Nowe harmonogramy trzeba dopisywać: RPP na 2027, pozostałe banki na 2028. Daty BoE na 2027 są wstępne. BoJ i RPP nie mają stałej godziny decyzji, więc są wpisane jako wydarzenia całodniowe.
+- Daty wyników bez klucza są tylko dla spółek z USA (Nasdaq). Dla DAX, FTSE, WIG20 itd.: link ICS z kalendarza finansowego spółki albo wpis ręczny.
+- Święta i reguły wygasania są liczone z reguł, a jednorazowych wyjątków (np. dzień żałoby narodowej) giełdy ogłaszają osobno.
 
 ## Filtry i przypomnienia
 
-- Filtry: kategorie, minimalny wpływ, waluty, wystąpienia bankierów, ukrywanie po słowach w tytule i ukrywanie pojedynczych wydarzeń. Przycisk **● High** w nagłówku szybko zawęża wszystko do wysokiego wpływu.
+- Filtry: rynki, kategorie, minimalny wpływ, waluty, wystąpienia bankierów, ukrywanie po słowach w tytule i ukrywanie pojedynczych wydarzeń. Przycisk **● High** w nagłówku szybko zawęża wszystko do wysokiego wpływu.
 - Przypomnienia: osobne wyprzedzenie dla wysokiego, średniego i niskiego wpływu oraz dla decyzji banków. Dla wydarzeń całodniowych przypomnienie dzień wcześniej i/lub rano. Do tego poranne podsumowanie dnia.
 - Wszystkie godziny są pokazywane w czasie lokalnym telefonu lub komputera.
 - **Android:** przypomnienia przez AlarmManager, przetrwają restart telefonu. Planowanych jest 150 najbliższych i odświeżają się przy każdym otwarciu apki.

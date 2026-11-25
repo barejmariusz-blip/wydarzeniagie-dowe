@@ -104,7 +104,7 @@ const CATS = {
   wyniki: {n:'Wyniki spółek',     c:'#ffd25b'},
   wlasne: {n:'Własne / ICS',      c:'#5be0ff'}
 };
-const CCYS = ['USD','EUR','GBP','JPY','CNY','CHF','CAD','AUD','NZD'];
+const CCYS = ['USD','EUR','GBP','JPY','CNY','CHF','CAD','AUD','NZD','PLN'];
 const IMP = {high:3, med:2, low:1, none:0};
 const IMP_N = {high:'Wysoki', med:'Średni', low:'Niski', none:'Brak'};
 const IMP_C = {high:'var(--hi)', med:'var(--md)', low:'var(--lo)', none:'var(--no)'};
@@ -115,12 +115,17 @@ const IMP_C = {high:'var(--hi)', med:'var(--md)', low:'var(--lo)', none:'var(--n
 const FOMC = ['2026-12-09','2027-01-27','2027-03-17','2027-04-28','2027-06-09','2027-07-28','2027-09-15','2027-11-17'];
 const FOMC_STRATEGY = ['2027-10-27'];   // posiedzenie strategiczne, bez decyzji o stopach
 const ECB = ['2026-12-17','2027-02-04','2027-03-18','2027-04-29','2027-06-10','2027-07-22','2027-09-09','2027-10-28','2027-12-16'];
+// BoE: decyzja 12:00 Londyn (daty 2027 wstępne). BoJ: dzień decyzji (drugi dzień posiedzenia). RPP: dzień decyzji (harmonogram 2027 jeszcze nieopublikowany).
+const BOE = ['2026-12-17','2027-02-04','2027-03-18','2027-04-29','2027-06-17','2027-07-29','2027-09-16','2027-11-04','2027-12-16'];
+const BOE_MPR = ['2027-02-04','2027-04-29','2027-07-29','2027-11-04'];
+const BOJ = ['2026-12-18','2027-01-22','2027-03-18','2027-04-28','2027-06-11','2027-07-22','2027-09-22','2027-10-29','2027-12-17'];
+const RPP = ['2026-12-02'];
 
 /* ---------- Stan ---------- */
 let S = migrate(load());
 function defaults(){
   return {v:1,
-    set:{horizon:60, minImp:'med', onlyHigh:false, ccy:['USD','EUR','GBP','CNY'], cats:{makro:true,bank:true,wyg:true,sesja:true,wyniki:true,wlasne:true},
+    set:{horizon:60, minImp:'med', onlyHigh:false, ccy:[], markets:{de:true,us:true,uk:true,pl:true,ch:true,jp:true,cmd:true}, cats:{makro:true,bank:true,wyg:true,sesja:true,wyniki:true,wlasne:true},
          hideWords:'', speeches:true,
          rem:{high:[30,5], med:[5], low:[]}, remBank:[60,15],
          dayRem:{eve:true, eveAt:'20:00', morn:true, mornAt:'07:30', minImp:'med'},
@@ -138,6 +143,8 @@ function migrate(s){
   for (const k in d.src) if (s.src[k] === undefined) s.src[k] = d.src[k];
   for (const k in d.set.cats) if (s.set.cats[k] === undefined) s.set.cats[k] = true;
   for (const k in d.cache) if (s.cache[k] === undefined) s.cache[k] = d.cache[k];
+  for (const k in d.set.markets) if (s.set.markets[k] === undefined) s.set.markets[k] = true;
+  if (!s.mig2){ if (s.set.ccy.join() === 'USD,EUR,GBP,CNY') s.set.ccy = []; s.mig2 = 1; }   // stary domyślny filtr pod DAX → wszystkie waluty
   return s;
 }
 function save(){ try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){ toast('Brak miejsca na dane'); } }
@@ -228,78 +235,175 @@ function easter(y){
   return kOf(y, mo-1, da);
 }
 
+/* ---------- Rynki ---------- */
+const MARKETS = {
+  de:  {n:'Niemcy / strefa euro (DAX, Euro Stoxx 50)', ccy:'EUR'},
+  us:  {n:'USA (S&P 500, Nasdaq 100, Dow)',             ccy:'USD'},
+  uk:  {n:'Wielka Brytania (FTSE 100)',                 ccy:'GBP'},
+  pl:  {n:'Polska (WIG20, GPW)',                        ccy:'PLN'},
+  ch:  {n:'Szwajcaria (SMI)',                           ccy:'CHF'},
+  jp:  {n:'Japonia (Nikkei 225)',                       ccy:'JPY'},
+  cmd: {n:'Surowce (ropa WTI)',                         ccy:'USD'}
+};
+const LDN = 'Europe/London', WAW = 'Europe/Warsaw', TYO = 'Asia/Tokyo', ZRH = 'Europe/Zurich';
+
 /* ---------- Kalendarz giełd (reguły) ---------- */
-function eurexHolidays(y){
+const noWeekend = list => list.filter(([k]) => k && dowK(k) % 6 !== 0);
+function deHolidays(y){   // Xetra + Eurex
   const e = easter(y);
-  return [[kOf(y,0,1),'Nowy Rok'],[addK(e,-2),'Wielki Piątek'],[addK(e,1),'Poniedziałek Wielkanocny'],[kOf(y,4,1),'Święto Pracy'],
-          [kOf(y,11,24),'Wigilia'],[kOf(y,11,25),'Boże Narodzenie'],[kOf(y,11,26),'Drugi dzień świąt'],[kOf(y,11,31),'Sylwester']]
-    .filter(([k]) => dowK(k) % 6 !== 0);
+  return noWeekend([[kOf(y,0,1),'Nowy Rok'],[addK(e,-2),'Wielki Piątek'],[addK(e,1),'Poniedziałek Wielkanocny'],[kOf(y,4,1),'Święto Pracy'],
+          [kOf(y,11,24),'Wigilia'],[kOf(y,11,25),'Boże Narodzenie'],[kOf(y,11,26),'Drugi dzień świąt'],[kOf(y,11,31),'Sylwester']]);
 }
-function usHolidays(y){
+function usHolidays(y){   // NYSE / Nasdaq (indeksy na CME mają w te dni skróconą sesję)
   const obs = (k, noFri) => { const w = dowK(k); return w === 6 ? (noFri ? null : addK(k,-1)) : w === 0 ? addK(k,1) : k; };
   const e = easter(y);
-  return [[obs(kOf(y,0,1), true),'Nowy Rok'],[nthWd(y,0,1,3),'Dzień Martina Luthera Kinga'],[nthWd(y,1,1,3),'Dzień Prezydentów'],
+  return noWeekend([[obs(kOf(y,0,1), true),'Nowy Rok'],[nthWd(y,0,1,3),'Dzień Martina Luthera Kinga'],[nthWd(y,1,1,3),'Dzień Prezydentów'],
           [addK(e,-2),'Wielki Piątek'],[lastWd(y,4,1),'Memorial Day'],[obs(kOf(y,5,19)),'Juneteenth'],[obs(kOf(y,6,4)),'Dzień Niepodległości'],
-          [nthWd(y,8,1,1),'Labor Day'],[nthWd(y,10,4,4),'Święto Dziękczynienia'],[obs(kOf(y,11,25)),'Boże Narodzenie']].filter(x => x[0]);
+          [nthWd(y,8,1,1),'Labor Day'],[nthWd(y,10,4,4),'Święto Dziękczynienia'],[obs(kOf(y,11,25)),'Boże Narodzenie']]);
 }
-function usEarlyCloses(y){
+function ukHolidays(y){   // LSE (bank holidays Anglii)
+  const e = easter(y), w = k => dowK(k);
+  const ny = w(kOf(y,0,1)) === 6 ? kOf(y,0,3) : w(kOf(y,0,1)) === 0 ? kOf(y,0,2) : kOf(y,0,1);
+  let c = kOf(y,11,25), b = kOf(y,11,26);
+  if (w(c) === 6){ c = kOf(y,11,27); b = kOf(y,11,28); } else if (w(c) === 0){ c = kOf(y,11,27); } else if (w(b) === 6){ b = kOf(y,11,28); }
+  return noWeekend([[ny,'Nowy Rok'],[addK(e,-2),'Wielki Piątek'],[addK(e,1),'Poniedziałek Wielkanocny'],[nthWd(y,4,1,1),'Early May Bank Holiday'],
+          [lastWd(y,4,1),'Spring Bank Holiday'],[lastWd(y,7,1),'Summer Bank Holiday'],[c,'Boże Narodzenie'],[b,'Boxing Day']]);
+}
+function plHolidays(y){   // GPW
+  const e = easter(y);
+  return noWeekend([[kOf(y,0,1),'Nowy Rok'],[kOf(y,0,6),'Trzech Króli'],[addK(e,-2),'Wielki Piątek'],[addK(e,1),'Poniedziałek Wielkanocny'],
+          [kOf(y,4,1),'Święto Pracy'],[kOf(y,4,3),'Święto Konstytucji 3 Maja'],[addK(e,60),'Boże Ciało'],[kOf(y,7,15),'Wniebowzięcie NMP'],
+          [kOf(y,10,1),'Wszystkich Świętych'],[kOf(y,10,11),'Święto Niepodległości'],[kOf(y,11,24),'Wigilia'],[kOf(y,11,25),'Boże Narodzenie'],
+          [kOf(y,11,26),'Drugi dzień świąt'],[kOf(y,11,31),'Sylwester']]);
+}
+function chHolidays(y){   // SIX
+  const e = easter(y);
+  return noWeekend([[kOf(y,0,1),'Nowy Rok'],[kOf(y,0,2),'Dzień św. Bertolda'],[addK(e,-2),'Wielki Piątek'],[addK(e,1),'Poniedziałek Wielkanocny'],
+          [kOf(y,4,1),'Święto Pracy'],[addK(e,39),'Wniebowstąpienie'],[addK(e,50),'Poniedziałek Zielonych Świątek'],[kOf(y,7,1),'Święto Narodowe'],
+          [kOf(y,11,24),'Wigilia'],[kOf(y,11,25),'Boże Narodzenie'],[kOf(y,11,26),'Drugi dzień świąt'],[kOf(y,11,31),'Sylwester']]);
+}
+function jpHolidays(y){   // TSE
+  const n = y - 1980, ver = Math.floor(20.8431 + 0.242194*n - Math.floor(n/4)), aut = Math.floor(23.2488 + 0.242194*n - Math.floor(n/4));
+  const base = [[kOf(y,0,1),'Nowy Rok'],[kOf(y,0,2),'Przerwa noworoczna'],[kOf(y,0,3),'Przerwa noworoczna'],[nthWd(y,0,1,2),'Dzień Dorosłości'],
+    [kOf(y,1,11),'Dzień Założenia Państwa'],[kOf(y,1,23),'Urodziny Cesarza'],[kOf(y,2,ver),'Równonoc wiosenna'],[kOf(y,3,29),'Dzień Showa'],
+    [kOf(y,4,3),'Dzień Konstytucji'],[kOf(y,4,4),'Dzień Zieleni'],[kOf(y,4,5),'Dzień Dziecka'],[nthWd(y,6,1,3),'Dzień Morza'],
+    [kOf(y,7,11),'Dzień Gór'],[nthWd(y,8,1,3),'Dzień Szacunku dla Starszych'],[kOf(y,8,aut),'Równonoc jesienna'],[nthWd(y,9,1,2),'Dzień Sportu'],
+    [kOf(y,10,3),'Dzień Kultury'],[kOf(y,10,23),'Dzień Dziękczynienia za Pracę'],[kOf(y,11,31),'Przerwa noworoczna']];
+  const set = new Set(base.map(x => x[0])), out = [...base];
+  for (const [k, n] of base) if (dowK(k) === 0 && n !== 'Przerwa noworoczna'){ let s = addK(k,1); while (set.has(s)) s = addK(s,1); set.add(s); out.push([s,'Dzień wolny w zamian']); }
+  for (const [k] of base){ const s = addK(k,2); if (set.has(s) && !set.has(addK(k,1)) && dowK(addK(k,1)) % 6){ set.add(addK(k,1)); out.push([addK(k,1),'Święto narodowe (między świętami)']); } }
+  return noWeekend(out);
+}
+const HOL = {de:deHolidays, us:usHolidays, uk:ukHolidays, pl:plHolidays, ch:chHolidays, jp:jpHolidays};
+const holCache = {};
+function hols(m, y){ const c = m + y; return holCache[c] || (holCache[c] = HOL[m](y)); }
+const closed = (m, k) => dowK(k) % 6 === 0 || hols(m, +k.slice(0,4)).some(h => h[0] === k);
+const prevOpen = (m, k) => { while (closed(m, k)) k = addK(k, -1); return k; };
+const isEurexClosed = k => closed('de', k);
+function earlyCloses(y){
   const out = [], j4 = dowK(kOf(y,6,4)), c24 = dowK(kOf(y,11,24));
-  if (j4 >= 2 && j4 <= 5) out.push([kOf(y,6,3), 'dzień przed Dniem Niepodległości']);
-  out.push([addK(nthWd(y,10,4,4), 1), 'dzień po Święcie Dziękczynienia']);
-  if (c24 >= 1 && c24 <= 4) out.push([kOf(y,11,24), 'Wigilia']);
+  if (j4 >= 2 && j4 <= 5) out.push(['us', kOf(y,6,3), 13, 0, ET, 'USA: skrócona sesja (zamknięcie 13:00 ET)', 'Dzień przed Dniem Niepodległości.']);
+  out.push(['us', addK(nthWd(y,10,4,4), 1), 13, 0, ET, 'USA: skrócona sesja (zamknięcie 13:00 ET)', 'Dzień po Święcie Dziękczynienia.']);
+  if (c24 >= 1 && c24 <= 4) out.push(['us', kOf(y,11,24), 13, 0, ET, 'USA: skrócona sesja (zamknięcie 13:00 ET)', 'Wigilia.']);
+  for (const d of [24, 31]){ const k = kOf(y,11,d); if (!closed('uk', k)) out.push(['uk', k, 12, 30, LDN, 'Londyn: skrócona sesja (zamknięcie 12:30)', d === 24 ? 'Wigilia.' : 'Sylwester.']); }
   return out;
 }
-const isEurexClosed = k => { const w = dowK(k); return w === 0 || w === 6 || eurexHolidays(+k.slice(0,4)).some(h => h[0] === k); };
+const MKT_NAME = {de:'Niemcy: Xetra i Eurex', us:'USA: NYSE i Nasdaq', uk:'Londyn: LSE', pl:'Polska: GPW', ch:'Szwajcaria: SIX', jp:'Japonia: giełda w Tokio'};
+const CLOSED_INFO = {
+  de:'Brak handlu DAX, FDAX i Euro Stoxx 50.',
+  us:'Wall Street zamknięta. Kontrakty na indeksy USA (CME) z krótszą sesją. W Europie po 15:30 zwykle mała płynność.',
+  uk:'Brak handlu na LSE i kontraktach na FTSE 100.', pl:'Brak sesji na GPW (WIG20, FW20).', ch:'Brak sesji na SIX (SMI).',
+  jp:'Brak sesji w Tokio. Kontrakty na Nikkei mogą być notowane w Osace / na CME.'};
 
 /* ---------- Generatory (bez sieci) ---------- */
 function mk(o){ return {end:o.start, allDay:false, impact:'med', ccy:'', info:'', ...o, key:o.id}; }
 function allDayEv(id, k, o){ const s = localDay(k); return mk({id, start:s, end:s + DAY, allDay:true, ...o}); }
+const on = m => S.set.markets[m] !== false;
+
+function genExpiry(y, out){
+  const tm = (id, mkt, k, h, mi, tz, o) => { const t = atTz(k, h, mi, tz); out.push(mk({id:id + k, mkt, cat:'wyg', start:t, end:t + 5*MIN, ...o})); };
+  for (let m = 0; m < 12; m++){
+    const q = m % 3 === 2, fri3 = nthWd(y, m, 5, 3);
+    if (on('de')){
+      const k = prevOpen('de', fri3);
+      tm('exp:', 'de', k, 13, 0, FRA, {src:'Reguły Eurex', ccy:'EUR', impact:q ? 'high' : 'med',
+        title:q ? 'Wygasanie FDAX, FESX i opcji (kwartalne)' : 'Wygasanie miesięcznych opcji na DAX i Euro Stoxx 50',
+        info:q ? 'DAX: cena rozliczeniowa z aukcji Xetra o 13:00. Euro Stoxx 50: średnia 11:50–12:00.' : 'Rozliczenie DAX z aukcji Xetra o 13:00.'});
+      if (q){ const r = prevOpen('de', addK(k, -8));
+        out.push(allDayEv('roll:'+r, r, {mkt:'de', src:'Reguły Eurex', cat:'wyg', ccy:'EUR', impact:'med', title:'Rollover FDAX / FESX – wolumen przechodzi na kolejny kwartał',
+          info:'Roll day Eurex (ok. tydzień przed wygaśnięciem ' + fmtK(k) + '). Brokerzy CFD przewijają zwykle w tych dniach.'})); }
+    }
+    if (on('us')){
+      const k = prevOpen('us', fri3);
+      if (q){
+        tm('qw:', 'us', k, 9, 30, ET, {src:'Reguły CME / Cboe', ccy:'USD', impact:'high', title:'USA: quad witching – wygasanie ES, NQ, YM i opcji (kwartalne)',
+          info:'Kontrakty na indeksy rozliczane kursem otwarcia (SOQ) 9:30 ET. Opcje na akcje i ETF wygasają na zamknięciu 16:00 ET: duży wolumen na koniec sesji.'});
+        const r = prevOpen('us', addK(k, -8));
+        out.push(allDayEv('rollus:'+r, r, {mkt:'us', src:'Reguły CME', cat:'wyg', ccy:'USD', impact:'med', title:'Rollover ES / NQ / YM – wolumen przechodzi na kolejny kwartał',
+          info:'Roll date CME (8 dni przed wygaśnięciem ' + fmtK(k) + ').'}));
+      } else tm('opex:', 'us', k, 16, 0, ET, {src:'Reguły Cboe', ccy:'USD', impact:'med', title:'USA: wygasanie miesięcznych opcji (OPEX)',
+          info:'Opcje na indeksy (rozliczenie AM na otwarciu), akcje i ETF (na zamknięciu 16:00 ET).'});
+      // VIX: środa 30 dni przed 3. piątkiem następnego miesiąca
+      const nf = prevOpen('us', nthWd(y, m+1, 5, 3)), vx = prevOpen('us', addK(nf, -30));
+      tm('vix:', 'us', vx, 9, 30, ET, {src:'Reguły Cboe', ccy:'USD', impact:'low', title:'USA: wygasanie VIX (kontrakty i opcje)', info:'Rozliczenie z kursów otwarcia opcji na S&P 500 (SOQ).'});
+    }
+    if (on('uk')){
+      const k = prevOpen('uk', fri3);
+      tm('ftse:', 'uk', k, 10, 15, LDN, {src:'Reguły ICE', ccy:'GBP', impact:q ? 'high' : 'low',
+        title:q ? 'Wygasanie FTSE 100 – kontrakty i opcje (kwartalne)' : 'Wygasanie miesięcznych opcji na FTSE 100', info:'Cena rozliczeniowa (EDSP) z aukcji LSE 10:10–10:15 czasu Londynu.'});
+    }
+    if (on('pl') && q){
+      const k = prevOpen('pl', fri3);
+      out.push(allDayEv('fw20:'+k, k, {mkt:'pl', src:'Reguły GPW', cat:'wyg', ccy:'PLN', impact:'high', title:'Wygasanie FW20 (kontrakty na WIG20)',
+        info:'Ostatni dzień notowania serii. Płynność przechodzi na kolejny kwartał w poprzednich dniach.'}));
+    }
+    if (on('jp')){
+      const k = prevOpen('jp', nthWd(y, m, 5, 2));
+      tm('sq:', 'jp', k, 9, 0, TYO, {src:'Reguły JPX', ccy:'JPY', impact:q ? 'high' : 'low',
+        title:q ? 'Japonia: SQ – wygasanie Nikkei 225 (kwartalne)' : 'Japonia: SQ – miesięczne opcje na Nikkei 225', info:'Cena rozliczeniowa (SQ) z kursów otwarcia spółek z indeksu, 9:00 w Tokio.'});
+    }
+    if (on('cmd')){
+      // WTI: koniec notowań 3 dni robocze przed 25. dniem miesiąca poprzedzającego dostawę (4, gdy 25. nie jest dniem roboczym)
+      let k = kOf(y, m, 25), n = closed('us', k) ? 4 : 3;
+      while (n > 0){ k = addK(k, -1); if (!closed('us', k)) n--; }
+      out.push(allDayEv('cl:'+k, k, {mkt:'cmd', src:'Reguły CME', cat:'wyg', ccy:'USD', impact:'med', title:'Ropa WTI (CL): wygasa kontrakt na ' + MN1[(m+1) % 12].toLowerCase(),
+        info:'Ostatni dzień notowania. Brokerzy CFD przewijają zwykle kilka dni wcześniej.'}));
+    }
+  }
+}
 
 function genEvents(from, to){
   const out = [], y0 = new Date(from).getFullYear(), y1 = new Date(to).getFullYear();
   for (let y = y0; y <= y1; y++){
-    if (S.src.exp.on){
-      for (let m = 0; m < 12; m++){
-        let k = nthWd(y, m, 5, 3); while (isEurexClosed(k)) k = addK(k, -1);
-        const q = m % 3 === 2, t = atTz(k, 13, 0, FRA);
-        out.push(mk({id:'exp:'+k, src:'Kalendarz Eurex', cat:'wyg', ccy:'EUR', start:t, end:t + 5*MIN, impact:q ? 'high' : 'med',
-          title:q ? 'Wygasanie FDAX i opcji na DAX (kwartalne)' : 'Wygasanie miesięcznych opcji na DAX',
-          info:q ? 'Cena rozliczeniowa z aukcji Xetra o 13:00. W USA tego dnia quad witching (zamknięcie 16:00 ET).'
-                 : 'Rozliczenie z aukcji Xetra o 13:00. W USA wygasają miesięczne opcje.'}));
-        if (q){
-          let r = addK(k, -8); while (isEurexClosed(r)) r = addK(r, -1);
-          out.push(allDayEv('roll:'+r, r, {src:'Kalendarz Eurex', cat:'wyg', ccy:'EUR', impact:'med',
-            title:'Rollover FDAX – wolumen przechodzi na kolejny kwartał',
-            info:'Roll day Eurex (ok. tydzień przed wygaśnięciem ' + fmtK(k) + '). CFD na DAX broker przewija zwykle w tych dniach, sprawdź u swojego.'}));
-        }
-      }
-    }
+    if (S.src.exp.on) genExpiry(y, out);
     if (S.src.hol.on){
-      for (const [k, n] of eurexHolidays(y)) out.push(allDayEv('eux:'+k, k, {src:'Kalendarz Eurex/Xetra', cat:'sesja', ccy:'EUR', impact:'high',
-        title:'Niemcy: Xetra i Eurex zamknięte – ' + n, info:'Brak handlu DAX i FDAX.'}));
-      for (const [k, n] of usHolidays(y)) if (!isEurexClosed(k)) out.push(allDayEv('ush:'+k, k, {src:'Kalendarz NYSE', cat:'sesja', ccy:'USD', impact:'med',
-        title:'USA: giełdy zamknięte – ' + n, info:'FDAX handlowany normalnie, ale po 15:30 bez Wall Street: zwykle mała płynność i brak danych z USA.'}));
-      for (const [k, n] of usEarlyCloses(y)){ const t = atTz(k, 13, 0, ET);
-        out.push(mk({id:'use:'+k, src:'Kalendarz NYSE', cat:'sesja', ccy:'USD', impact:'low', start:t, end:t + 5*MIN,
-          title:'USA: skrócona sesja (zamknięcie 13:00 ET)', info:n.charAt(0).toUpperCase() + n.slice(1) + '. Popołudnie zwykle bardzo spokojne.'})); }
+      for (const m of Object.keys(HOL)) if (on(m)) for (const [k, n] of hols(m, y))
+        out.push(allDayEv('hol:' + m + ':' + k, k, {mkt:m, closed:true, src:'Kalendarz giełdy', cat:'sesja', ccy:MARKETS[m].ccy, impact:m === 'de' || m === 'us' ? 'high' : 'med',
+          title:MKT_NAME[m] + ' zamknięte – ' + n, info:CLOSED_INFO[m]}));
+      for (const [m, k, h, mi, tz, title, info] of earlyCloses(y)) if (on(m)){ const t = atTz(k, h, mi, tz);
+        out.push(mk({id:'early:' + m + ':' + k, mkt:m, src:'Kalendarz giełdy', cat:'sesja', ccy:MARKETS[m].ccy, impact:'low', start:t, end:t + 5*MIN, title, info:info + ' Popołudnie zwykle bardzo spokojne.'})); }
     }
     if (S.src.dst.on){
       const usOn = nthWd(y,2,0,2), euOn = lastWd(y,2,0), euOff = lastWd(y,9,0), usOff = nthWd(y,10,0,1);
       const d = (id, k, title, info) => out.push(allDayEv(id+k, k, {src:'Zmiana czasu', cat:'sesja', ccy:'', impact:'med', title, info}));
-      d('dst1:', usOn, 'USA: zmiana czasu na letni', `Do ${fmtK(euOn)} dane z USA godzinę wcześniej: 13:30 zamiast 14:30, otwarcie Wall Street 14:30 zamiast 15:30, FOMC 19:00.`);
-      d('dst2:', euOn, 'Europa: zmiana czasu na letni', 'Godziny z USA wracają do normy: dane 14:30, otwarcie Wall Street 15:30, FOMC 20:00.');
-      d('dst3:', euOff, 'Europa: zmiana czasu na zimowy', `Do ${fmtK(usOff)} dane z USA godzinę wcześniej: 13:30, otwarcie Wall Street 14:30, FOMC 19:00.`);
+      d('dst1:', usOn, 'USA: zmiana czasu na letni', `Do ${fmtK(euOn)} wszystko z USA godzinę wcześniej czasu polskiego: dane 13:30 zamiast 14:30, otwarcie Wall Street 14:30, FOMC 19:00.`);
+      d('dst2:', euOn, 'Europa: zmiana czasu na letni', 'Godziny z USA wracają do normy: dane 14:30, otwarcie Wall Street 15:30, FOMC 20:00. Azja (Tokio) przesuwa się o godzinę wcześniej.');
+      d('dst3:', euOff, 'Europa: zmiana czasu na zimowy', `Do ${fmtK(usOff)} wszystko z USA godzinę wcześniej czasu polskiego: dane 13:30, otwarcie Wall Street 14:30, FOMC 19:00.`);
       d('dst4:', usOff, 'USA: zmiana czasu na zimowy', 'Godziny z USA wracają do normy: dane 14:30, otwarcie Wall Street 15:30, FOMC 20:00.');
     }
   }
   if (S.src.cb.on){
-    for (const k of FOMC){ const t = atTz(k, 14, 0, ET);
-      out.push(mk({id:'fomc:'+k, src:'Kalendarz Fed', cat:'bank', ccy:'USD', impact:'high', start:t, end:t + 5*MIN, title:'FOMC – decyzja ws. stóp procentowych (Fed)', info:'Komunikat 14:00 ET. Konferencja prezesa 30 min później.'}));
-      out.push(mk({id:'fomcpc:'+k, src:'Kalendarz Fed', cat:'bank', ccy:'USD', impact:'high', start:t + 30*MIN, end:t + 90*MIN, title:'FOMC – konferencja prezesa Fed', info:''})); }
+    const pair = (id, k, h, mi, tz, ccy, src, title, info, conf, confOff) => { const t = atTz(k, h, mi, tz);
+      out.push(mk({id:id + k, src, cat:'bank', ccy, impact:'high', start:t, end:t + 5*MIN, title, info}));
+      if (conf) out.push(mk({id:id + 'pc:' + k, src, cat:'bank', ccy, impact:'high', start:t + confOff*MIN, end:t + (confOff + 60)*MIN, title:conf, info:''})); };
+    for (const k of FOMC) pair('fomc:', k, 14, 0, ET, 'USD', 'Kalendarz Fed', 'FOMC – decyzja ws. stóp procentowych (Fed)', 'Komunikat 14:00 ET, konferencja 30 min później.', 'FOMC – konferencja prezesa Fed', 30);
     for (const k of FOMC_STRATEGY) out.push(allDayEv('fomcs:'+k, k, {src:'Kalendarz Fed', cat:'bank', ccy:'USD', impact:'low', title:'FOMC – posiedzenie strategiczne (bez decyzji o stopach)', info:''}));
-    for (const k of ECB){ const t = atTz(k, 14, 15, FRA);
-      out.push(mk({id:'ecb:'+k, src:'Kalendarz EBC', cat:'bank', ccy:'EUR', impact:'high', start:t, end:t + 5*MIN, title:'EBC – decyzja ws. stóp procentowych', info:'Komunikat 14:15, konferencja 14:45 (czas Frankfurtu).'}));
-      out.push(mk({id:'ecbpc:'+k, src:'Kalendarz EBC', cat:'bank', ccy:'EUR', impact:'high', start:t + 30*MIN, end:t + 90*MIN, title:'EBC – konferencja prasowa', info:''})); }
+    for (const k of ECB) pair('ecb:', k, 14, 15, FRA, 'EUR', 'Kalendarz EBC', 'EBC – decyzja ws. stóp procentowych', 'Komunikat 14:15, konferencja 14:45 (czas Frankfurtu).', 'EBC – konferencja prasowa', 30);
+    for (const k of BOE) pair('boe:', k, 12, 0, LDN, 'GBP', 'Kalendarz BoE', 'BoE – decyzja ws. stóp procentowych', 'Komunikat i protokół 12:00 czasu Londynu.' + (BOE_MPR.includes(k) ? ' Z raportem o polityce pieniężnej (Monetary Policy Report).' : ''));
+    for (const k of BOJ) out.push(allDayEv('boj:'+k, k, {src:'Kalendarz BoJ', cat:'bank', ccy:'JPY', impact:'high', title:'BoJ – decyzja ws. stóp procentowych',
+      info:'Godzina nieustalona: komunikat zwykle około południa w Tokio (ok. 4:00–5:00 czasu polskiego). Konferencja prezesa 15:30 w Tokio.'}));
+    for (const k of RPP) out.push(allDayEv('rpp:'+k, k, {src:'Kalendarz NBP', cat:'bank', ccy:'PLN', impact:'high', title:'RPP – decyzja ws. stóp procentowych (NBP)',
+      info:'Godzina nieustalona: komunikat zwykle po południu, konferencja prezesa NBP następnego dnia.'}));
   }
   return out.filter(e => e.end >= from && e.start <= to);
 }
@@ -424,8 +528,9 @@ function allEvents(){
   for (const s of S.ics) if (s.on !== false) net.push(...(S.cache.ics[s.id] || []));
   net.push(...S.manual.map(m => mk({...m, key:m.id, src:'Ręcznie'})));
   // Terminy Fed/EBC z kalendarza zastępuje wpis z Forex Factory, gdy już się pojawi
-  const ffBank = S.cache.ff.filter(e => S.src.ff.on && e.cat === 'bank' && /Funds Rate|FOMC Statement|Main Refinancing|Monetary Policy Statement|Press Conference/i.test(e.title));
-  const gen = genEvents(from, to).filter(g => !(g.cat === 'bank' && !g.allDay && ffBank.some(f => f.ccy === g.ccy && Math.abs(f.start - g.start) < 45*MIN)));
+  const ffBank = S.cache.ff.filter(e => S.src.ff.on && e.cat === 'bank' && /Funds Rate|FOMC Statement|Main Refinancing|Monetary Policy Statement|Press Conference|Official Bank Rate|BOJ Policy Rate|Policy Rate|Reference Rate/i.test(e.title));
+  const dup = g => ffBank.some(f => f.ccy === g.ccy && (g.allDay ? dayKey(f.start) === dayKey(g.start) : Math.abs(f.start - g.start) < 45*MIN));
+  const gen = genEvents(from, to).filter(g => !(g.cat === 'bank' && !g.key.startsWith('fomcs:') && dup(g)));
   const keys = new Set();
   return gen.concat(net).filter(e => !keys.has(e.key) && keys.add(e.key)).filter(e => e.end >= from && e.start <= to && !isNaN(e.start)).sort((a,b) => a.start - b.start || IMP[b.impact] - IMP[a.impact]);
 }
@@ -433,12 +538,13 @@ const words = () => S.set.hideWords.split(',').map(x => x.trim().toLowerCase()).
 function pass(e, w){
   if ((S.flags[e.key] || {}).hidden) return false;
   if (!S.set.cats[e.cat]) return false;
+  if (e.mkt && S.set.markets[e.mkt] === false) return false;
   const min = S.set.onlyHigh ? 'high' : S.set.minImp;
   if ((e.cat === 'makro' || e.cat === 'bank') && e.src === 'Forex Factory'){
     if (IMP[e.impact] < IMP[min]) return false;
     if (e.speech && !S.set.speeches) return false;
   } else if (S.set.onlyHigh && IMP[e.impact] < 3) return false;
-  if (e.ccy && e.ccy !== 'ALL' && S.set.ccy.length && !S.set.ccy.includes(e.ccy) && e.src === 'Forex Factory') return false;
+  if (e.ccy && e.ccy !== 'ALL' && S.set.ccy.length && !S.set.ccy.includes(e.ccy) && (e.src === 'Forex Factory' || e.cat === 'bank')) return false;
   if (w.length && w.some(x => e.title.toLowerCase().includes(x))) return false;
   return true;
 }
@@ -563,15 +669,15 @@ function vCalendar(){
   const total = Math.ceil((startOff + new Date(y, m+1, 0).getDate()) / 7) * 7;
   for (let i = 0; i < total; i++){
     const d = new Date(y, m, 1 - startOff + i), k = dayKey(d), evs = (byDay[k] || []).slice().sort((a,b) => IMP[b.impact] - IMP[a.impact]);
-    const closed = evs.some(e => e.key.startsWith('eux:'));
-    cells += `<div class="c ${d.getMonth() !== m ? 'o' : ''} ${k === tdk ? 'td' : ''} ${k === calSel ? 'sel' : ''} ${closed ? 'cl' : ''}" data-day="${k}">${d.getDate()}
+    const isCl = evs.some(e => e.closed);
+    cells += `<div class="c ${d.getMonth() !== m ? 'o' : ''} ${k === tdk ? 'td' : ''} ${k === calSel ? 'sel' : ''} ${isCl ? 'cl' : ''}" data-day="${k}">${d.getDate()}
       <div class="dots">${evs.slice(0,8).map(e => `<i style="background:${IMP_C[e.impact]}"></i>`).join('')}</div></div>`;
   }
   const sel = calSel ? (byDay[calSel] || []) : [];
   $('#view').innerHTML = `<div class="row" style="justify-content:space-between;margin-bottom:10px">
       <button class="btn sm" id="pm">‹</button><b>${MN1[m]} ${y}</b><button class="btn sm" id="nm">›</button></div>
     <div class="grid">${['pon','wt','śr','czw','pt','sob','nd'].map(x => `<div class="h">${x}</div>`).join('')}${cells}</div>
-    <div class="row" style="margin-top:8px;font-size:12px;color:var(--mut)"><span><i class="imp" style="background:var(--hi)"></i>wysoki</span><span><i class="imp" style="background:var(--md)"></i>średni</span><span><i class="imp" style="background:var(--lo)"></i>niski</span><span><i class="imp" style="background:#24141a;border:1px solid var(--line)"></i>Xetra zamknięta</span></div>
+    <div class="row" style="margin-top:8px;font-size:12px;color:var(--mut)"><span><i class="imp" style="background:var(--hi)"></i>wysoki</span><span><i class="imp" style="background:var(--md)"></i>średni</span><span><i class="imp" style="background:var(--lo)"></i>niski</span><span><i class="imp" style="background:#24141a;border:1px solid var(--line)"></i>giełda zamknięta</span></div>
     <div style="margin-top:12px">${calSel ? (sel.length ? sel.map(evRow).join('') : '<div class="empty">Brak wydarzeń tego dnia</div>') : '<div class="empty"><small>Kliknij dzień, żeby zobaczyć wydarzenia</small></div>'}</div>`;
   $('#pm').onclick = () => { calMonth = new Date(y, m-1, 1); calSel = null; render(); };
   $('#nm').onclick = () => { calMonth = new Date(y, m+1, 1); calSel = null; render(); };
@@ -580,19 +686,23 @@ function vCalendar(){
 function vFilters(){
   const st = S.set, hidden = Object.keys(S.flags).filter(k => S.flags[k].hidden).length;
   $('#view').innerHTML = `
+  <div class="card"><b>Rynki</b><div class="chips" id="fMkt" style="margin-top:8px">${Object.entries(MARKETS).map(([k, m]) =>
+    `<button class="chip ${st.markets[k] !== false ? 'on' : ''}" data-k="${k}">${m.n}</button>`).join('')}</div>
+    <small>Wygasanie kontraktów, święta i skrócone sesje dla zaznaczonych rynków.</small></div>
   <div class="card"><b>Kategorie</b><div class="chips" id="fCat" style="margin-top:8px">${Object.entries(CATS).map(([k, c]) =>
     `<button class="chip ${st.cats[k] ? 'on' : ''}" data-k="${k}"><i class="imp" style="background:${c.c}"></i>${c.n}</button>`).join('')}</div></div>
   <div class="card"><b>Minimalny wpływ danych makro</b><div class="chips" id="fImp" style="margin-top:8px">${['low','med','high'].map(k =>
     `<button class="chip ${st.minImp === k ? 'on' : ''}" data-k="${k}"><i class="imp" style="background:${IMP_C[k]}"></i>${IMP_N[k]}${k !== 'high' ? ' i wyżej' : ''}</button>`).join('')}</div>
     <small>Dotyczy kalendarza makro (Forex Factory). Przycisk „● High” w nagłówku szybko zawęża wszystko do wysokiego wpływu.</small>
     <div class="row" style="margin-top:10px"><button class="chip ${st.speeches ? 'on' : ''}" id="fSp">Wystąpienia bankierów (Speaks, Testifies)</button></div></div>
-  <div class="card"><b>Waluty (dane makro)</b><div class="chips" id="fCcy" style="margin-top:8px">${CCYS.map(c =>
+  <div class="card"><b>Waluty (dane makro i banki centralne)</b><div class="chips" id="fCcy" style="margin-top:8px">${CCYS.map(c =>
     `<button class="chip ${st.ccy.includes(c) ? 'on' : ''}" data-k="${c}">${c}</button>`).join('')}</div>
-    <small>Dla DAX: EUR (w tym dane z Niemiec), USD. Nic nie zaznaczone = wszystkie waluty.</small></div>
+    <small>Nic nie zaznaczone = wszystkie waluty. EUR obejmuje też dane z Niemiec, Francji i Włoch.</small></div>
   <div class="card"><b>Ukryj, jeśli tytuł zawiera</b><label>Słowa po przecinku, np. „Bond Auction, Crude Oil Inventories”</label>
     <input id="fW" value="${esc(st.hideWords)}"></div>
   ${hidden ? `<div class="card row"><span style="flex:1">Ukryte pojedyncze wydarzenia: ${hidden}</span><button class="btn sm" id="fUn">Przywróć</button></div>` : ''}`;
   const tog = (id, fn) => $(id).onclick = e => { const b = e.target.closest('[data-k]'); if (!b) return; fn(b.dataset.k); save(); reschedule(); render(); };
+  tog('#fMkt', k => st.markets[k] = st.markets[k] === false);
   tog('#fCat', k => st.cats[k] = !st.cats[k]);
   tog('#fImp', k => st.minImp = k);
   tog('#fCcy', k => { const i = st.ccy.indexOf(k); i >= 0 ? st.ccy.splice(i, 1) : st.ccy.push(k); });
@@ -607,9 +717,9 @@ function stLine(s){
 function vSources(){
   const B = [
     ['ff', 'Kalendarz makro (Forex Factory)', 'Wszystkie publikacje danych, decyzje i wystąpienia banków centralnych z prognozą i poprzednim odczytem. Bieżący tydzień (i następny, jeśli dostępny). Bez klucza.', true],
-    ['cb', 'Posiedzenia Fed i EBC', 'Daty decyzji i konferencji z oficjalnych kalendarzy na kolejne miesiące. Gdy dany tydzień pojawi się w Forex Factory, wpis z kalendarza zastępuje wpis FF.'],
-    ['exp', 'Wygasanie FDAX i opcji, rollover', 'Liczone z reguł Eurex: trzeci piątek miesiąca, rozliczenie 13:00, kwartały marzec/czerwiec/wrzesień/grudzień.'],
-    ['hol', 'Święta i skrócone sesje', 'Xetra/Eurex zamknięte, święta i skrócone sesje w USA. Liczone z reguł giełd.'],
+    ['cb', 'Posiedzenia banków centralnych', 'Fed, EBC, BoE, BoJ i RPP: daty decyzji z oficjalnych kalendarzy na kolejne miesiące. Gdy dany tydzień pojawi się w Forex Factory, wpis z kalendarza zastępuje wpis FF.'],
+    ['exp', 'Wygasanie kontraktów i opcji, rollover', 'Liczone z reguł giełd: Eurex (DAX, Euro Stoxx 50), CME/Cboe (ES, NQ, YM, OPEX, VIX), ICE (FTSE 100), GPW (FW20), JPX (Nikkei SQ), ropa WTI. Rynki wybierasz w Filtrach.'],
+    ['hol', 'Święta i skrócone sesje', 'Dni bez sesji na Xetra/Eurex, NYSE, LSE, GPW, SIX i w Tokio oraz skrócone sesje. Liczone z reguł giełd.'],
     ['dst', 'Zmiana czasu USA / Europa', 'Tygodnie, w których dane z USA i otwarcie Wall Street przesuwają się o godzinę.'],
     ['usE', 'Wyniki spółek z USA (Nasdaq)', 'Daty raportów dla spółek z listy poniżej. Bez klucza.', true]
   ];
@@ -621,7 +731,7 @@ function vSources(){
        <span class="tag">${CATS[s.cat].n}</span><span class="tag">${(S.cache.ics[s.id] || []).length}</span>${s.on === false ? '<span class="tag">⏸</span>' : ''}</div>${stLine(s)}</div>`).join('')}
     ${S.manual.length ? `<div class="card">Ręczne wydarzenia: ${S.manual.length} <small>(edycja: kliknij wydarzenie na liście)</small></div>` : ''}
     <div class="row"><button class="btn acc" id="aIcs">+ Kalendarz ICS</button><button class="btn" id="aMan">+ Wydarzenie ręcznie</button></div>
-    <p><small>Wyniki spółek z DAX: większość spółek ma na stronie relacji inwestorskich kalendarz finansowy do pobrania jako ICS (Financial calendar → iCal/Outlook). Wklej link jako „Kalendarz ICS” z kategorią „Wyniki spółek”. Darmowego źródła dat wyników dla całego DAX bez klucza nie ma.</small></p>`;
+    <p><small>Wyniki spółek spoza USA (DAX, FTSE, WIG20…): większość spółek ma na stronie relacji inwestorskich kalendarz finansowy do pobrania jako ICS (Financial calendar → iCal/Outlook). Wklej link jako „Kalendarz ICS” z kategorią „Wyniki spółek”. Darmowego źródła bez klucza dla całych indeksów spoza USA nie ma.</small></p>`;
   $('#view').querySelectorAll('[data-tg]').forEach(b => b.onclick = ev => { ev.stopPropagation(); const s = S.src[b.dataset.tg]; s.on = !s.on;
     save(); render(); reschedule(); if (s.on && ['ff','usE'].includes(b.dataset.tg)) syncAll(); });
   $('#tick').onchange = e => { S.src.usE.tickers = e.target.value.toUpperCase(); S.src.usE.t = 0; save(); syncAll(); };
