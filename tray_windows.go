@@ -165,14 +165,16 @@ type windowPos struct {
 // ---------------------------------------------------------------- konfiguracja (widget)
 
 type appConfig struct {
-	Widget  bool   `json:"widget"`
-	WX      int32  `json:"wx"`
-	WY      int32  `json:"wy"`
-	HasPos  bool   `json:"hasPos"`
-	Balloon bool   `json:"balloon"` // pokazano już dymek „działa w tle”
-	WW      int32  `json:"ww"`      // rozmiar widgetu
-	WH      int32  `json:"wh"`
-	Corner  string `json:"corner"` // "" = swobodnie, "tl" | "tr" | "bl" | "br" = przypięty do rogu ekranu
+	Widget   bool   `json:"widget"`
+	WX       int32  `json:"wx"`
+	WY       int32  `json:"wy"`
+	HasPos   bool   `json:"hasPos"`
+	Balloon  bool   `json:"balloon"` // pokazano już dymek „działa w tle”
+	WW       int32  `json:"ww"`      // rozmiar widgetu
+	WH       int32  `json:"wh"`
+	Corner   string `json:"corner"`   // "" = swobodnie, "tl" | "tr" | "bl" | "br" = przypięty do rogu ekranu
+	Expanded bool   `json:"expanded"` // rozwinięty panel „Analiza”
+	WHX      int32  `json:"whx"`      // wysokość z rozwiniętym panelem
 }
 
 var (
@@ -314,7 +316,12 @@ func widgetProc(hwnd, msg, wp, lp uintptr) uintptr {
 			cfg.Corner = "" // przeciągnięty ręcznie: odpięty od rogu
 		}
 		cfg.WX, cfg.WY, cfg.HasPos = r.Left, r.Top, true
-		cfg.WW, cfg.WH = r.Right-r.Left, r.Bottom-r.Top
+		cfg.WW = r.Right - r.Left
+		if cfg.Expanded {
+			cfg.WHX = r.Bottom - r.Top
+		} else {
+			cfg.WH = r.Bottom - r.Top
+		}
 		cfgMu.Unlock()
 		dragging = false
 		saveConfig()
@@ -351,6 +358,12 @@ func createWidget() {
 
 	cfgMu.Lock()
 	x, y, has, ww, wh := cfg.WX, cfg.WY, cfg.HasPos, cfg.WW, cfg.WH
+	if cfg.Expanded {
+		wh = cfg.WHX
+		if wh < minWidgetH {
+			wh = widgetH + expandAdd
+		}
+	}
 	if !has {
 		cfg.Corner = "br" // pierwszy start: prawy dolny róg
 	}
@@ -446,6 +459,51 @@ func setCorner(c string) {
 	saveConfig()
 	anchorWidget()
 }
+
+const expandAdd = 360 // ile dochodzi wysokości po rozwinięciu panelu „Analiza” (domyślnie)
+
+// Rozwija/zwija dolny panel: zmienia wysokość okna, a przypięty widget zostaje w swoim rogu
+// (przy dolnym rogu rośnie w górę). Swobodny rośnie w dół, ale nie wychodzi poza ekran.
+func setExpanded(on bool) {
+	cfgMu.Lock()
+	cfg.Expanded = on
+	base := cfg.WH
+	if base < minWidgetH {
+		base = widgetH
+	}
+	h := base
+	if on {
+		h = cfg.WHX
+		if h <= base {
+			h = base + expandAdd
+			cfg.WHX = h
+		}
+	}
+	cfgMu.Unlock()
+	saveConfig()
+	if widgetHwnd == 0 {
+		return
+	}
+	var r rect
+	pGetWindowRect.Call(widgetHwnd, uintptr(unsafe.Pointer(&r)))
+	mon, _, _ := pMonitorFromWindow.Call(widgetHwnd, 2)
+	mi := monitorInfo{}
+	mi.CbSize = uint32(unsafe.Sizeof(mi))
+	pGetMonitorInfo.Call(mon, uintptr(unsafe.Pointer(&mi)))
+	if wa := mi.Work; wa.Bottom > wa.Top {
+		if max := wa.Bottom - wa.Top - 2*pinMargin; h > max {
+			h = max
+		}
+		y := r.Top
+		if y+h > wa.Bottom-pinMargin {
+			y = wa.Bottom - pinMargin - h
+		}
+		pSetWindowPos.Call(widgetHwnd, 0, uintptr(r.Left), uintptr(y), uintptr(r.Right-r.Left), uintptr(h), swpNoZOrder|swpNoActivate)
+	}
+	anchorWidget()
+}
+
+func widgetExpanded() bool { cfgMu.Lock(); defer cfgMu.Unlock(); return cfg.Expanded }
 
 func widgetCorner() string { cfgMu.Lock(); defer cfgMu.Unlock(); return cfg.Corner }
 

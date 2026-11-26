@@ -66,6 +66,10 @@ func proxyGet(u string) (int, string) {
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "application/json, text/calendar, text/plain, */*")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9,pl;q=0.8")
+	if strings.Contains(u, "cnn.io") { // CNN Fear & Greed odrzuca zapytania bez strony źródłowej
+		req.Header.Set("Referer", "https://edition.cnn.com/")
+		req.Header.Set("Origin", "https://edition.cnn.com")
+	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return 0, err.Error()
@@ -111,8 +115,9 @@ func serve(ln net.Listener) {
 	mux.HandleFunc("/api/widget", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			var req struct {
-				On     *bool
-				Corner *string
+				On       *bool
+				Corner   *string
+				Expanded *bool
 			}
 			json.NewDecoder(r.Body).Decode(&req)
 			if req.On != nil {
@@ -121,8 +126,11 @@ func serve(ln net.Listener) {
 			if req.Corner != nil {
 				setCorner(*req.Corner)
 			}
+			if req.Expanded != nil {
+				setExpanded(*req.Expanded)
+			}
 		}
-		jsonOut(w, map[string]any{"on": widgetEnabled(), "corner": widgetCorner()})
+		jsonOut(w, map[string]any{"on": widgetEnabled(), "corner": widgetCorner(), "expanded": widgetExpanded()})
 	})
 	mux.HandleFunc("/api/widget-alert", func(w http.ResponseWriter, r *http.Request) { jsonOut(w, map[string]any{"alert": currentAlert()}) })
 	mux.HandleFunc("/api/widget-ack", func(w http.ResponseWriter, r *http.Request) { ackAlert(); jsonOut(w, map[string]bool{"ok": true}) })

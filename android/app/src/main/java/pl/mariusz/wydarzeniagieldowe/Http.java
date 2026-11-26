@@ -19,6 +19,10 @@ final class Http {
             c.setInstanceFollowRedirects(true);
             c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36 WydarzeniaGieldowe/0.1");
             c.setRequestProperty("Accept", "application/json, text/calendar, text/plain, */*");
+            if (url.contains("cnn.io")) {   // CNN Fear & Greed odrzuca zapytania bez strony źródłowej
+                c.setRequestProperty("Referer", "https://edition.cnn.com/");
+                c.setRequestProperty("Origin", "https://edition.cnn.com");
+            }
             int code = c.getResponseCode();
             InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
             ByteArrayOutputStream bo = new ByteArrayOutputStream();

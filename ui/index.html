@@ -16,7 +16,7 @@ header h1{font-size:19px;margin:0;flex:1}
 main{padding:12px 14px 96px}
 nav{position:fixed;bottom:0;left:0;right:0;background:#10131b;border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom);z-index:6}
 nav .wrap{display:flex}
-nav button{flex:1;background:none;border:0;color:var(--mut);padding:10px 0 12px;font-size:12px;cursor:pointer}
+nav button{flex:1;background:none;border:0;color:var(--mut);padding:10px 0 12px;font-size:11px;cursor:pointer;min-width:0}
 nav button b{display:block;font-size:20px;font-weight:400;margin-bottom:2px}
 nav button.on{color:var(--acc)}
 .btn{background:var(--card2);color:var(--tx);border:1px solid var(--line);border-radius:10px;padding:9px 13px;font-size:14px;cursor:pointer;text-decoration:none;display:inline-block}
@@ -71,7 +71,12 @@ body.widget header,body.widget nav,body.widget main{display:none}
 #wg .wh button{background:none;border:0;color:var(--mut);font-size:15px;cursor:pointer;padding:0 4px}
 #wg .wn{padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer}
 #wg .wn .cd{font-size:26px;font-weight:700;color:var(--acc);font-variant-numeric:tabular-nums;line-height:1.1}
-#wg .wl{overflow:auto;max-height:calc(100vh - 150px)}
+body.widget #wg{display:flex;flex-direction:column}
+#wg .wh,#wg .wa,#wg .wn{flex:none}
+#wg .wl{overflow:auto;flex:1 1 auto;min-height:40px}
+#wg .wx{padding:6px 12px;border-top:1px solid var(--line);color:var(--acc);cursor:pointer;font-size:12px;flex:none}
+#wg .wx:hover{background:#151a26}
+#wg .wana{flex:0 1 auto;max-height:65vh;overflow:auto;border-top:1px solid var(--line);background:#0b0e14}
 #wg .wi{display:flex;gap:8px;padding:6px 12px;align-items:flex-start;cursor:pointer}
 #wg .wi:hover{background:#151a26}
 #wg .wi .bar{width:3px;align-self:stretch;border-radius:3px}
@@ -103,6 +108,7 @@ body.widget header,body.widget nav,body.widget main{display:none}
   <button data-tab="up" class="on"><b>☰</b>Nadchodzące</button>
   <button data-tab="cal"><b>▦</b>Kalendarz</button>
   <button data-tab="flt"><b>⚲</b>Filtry</button>
+  <button data-tab="ana"><b>◔</b>Analiza</button>
   <button data-tab="src"><b>⇣</b>Źródła</button>
   <button data-tab="set"><b>⚙</b>Ustawienia</button>
 </div></nav>
@@ -684,12 +690,12 @@ function weekNo(t){ const d = new Date(t); d.setHours(0,0,0,0); d.setDate(d.getD
 
 /* ---------- Widoki ---------- */
 let tab = 'up', calMonth = null, calSel = null;
-const TITLES = {up:'Nadchodzące', cal:'Kalendarz', flt:'Filtry', src:'Źródła', set:'Ustawienia'};
+const TITLES = {up:'Nadchodzące', cal:'Kalendarz', flt:'Filtry', ana:'Analiza rynku', src:'Źródła', set:'Ustawienia'};
 function render(){
   $('#title').textContent = TITLES[tab];
   $('#hiBtn').classList.toggle('on', !!S.set.onlyHigh);
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
-  ({up:vUpcoming, cal:vCalendar, flt:vFilters, src:vSources, set:vSettings})[tab]();
+  ({up:vUpcoming, cal:vCalendar, flt:vFilters, ana:vAnaly, src:vSources, set:vSettings})[tab]();
 }
 
 function evRow(e){
@@ -1115,8 +1121,260 @@ $('#view').onclick = e => {
   const ic = e.target.closest('[data-ics]'); if (ic) return openIcs(ic.dataset.ics);
   const dy = e.target.closest('[data-day]'); if (dy){ calSel = +dy.dataset.day; render(); }
 };
-$('#syncBtn').onclick = () => syncAll(true);
+$('#syncBtn').onclick = () => tab === 'ana' ? syncAna(true) : syncAll(true);
 $('#hiBtn').onclick = () => { S.set.onlyHigh = !S.set.onlyHigh; save(); reschedule(); render(); toast(S.set.onlyHigh ? 'Tylko wysoki wpływ' : 'Wszystkie wg filtrów'); };
+/* =========================================================================
+   ANALIZA: sentyment EUWAX (DAX), CNN Fear & Greed, VIX, trend SMA (M5–D1), otwarte luki.
+   Dane pobiera główne okno (co kilka minut) i trzyma w S.cache.ana; widget tylko je czyta.
+   ========================================================================= */
+const INSTR = {
+  DAX:   {y:'^GDAXI',   n:'DAX',        d:'DAX (indeks kasowy, sesja Xetra)'},
+  NQ:    {y:'NQ=F',     n:'NQ',         d:'Nasdaq 100 – kontrakt NQ (US100)'},
+  ES:    {y:'ES=F',     n:'ES',         d:'S&P 500 – kontrakt ES (US500)'},
+  YM:    {y:'YM=F',     n:'YM',         d:'Dow Jones – kontrakt YM (US30)'},
+  FTSE:  {y:'^FTSE',    n:'FTSE',       d:'FTSE 100 (indeks)'},
+  N225:  {y:'^N225',    n:'Nikkei',     d:'Nikkei 225 (indeks)'},
+  GC:    {y:'GC=F',     n:'Złoto',      d:'Złoto – kontrakt GC'},
+  CL:    {y:'CL=F',     n:'Ropa WTI',   d:'Ropa WTI – kontrakt CL'},
+  EURUSD:{y:'EURUSD=X', n:'EURUSD',     d:'EUR/USD'}
+};
+const TFS = [['M5','5m','5d'], ['M15','15m','1mo'], ['H1','60m','6mo'], ['H4','60m','6mo'], ['D1','1d','2y']];
+function anaSet(){
+  if (!S.set.ana) S.set.ana = {on:true, inst:['DAX','NQ','ES','YM'], fast:33, slow:144, gapMin:0.1, every:3, alertAlign:false, euwaxAlert:0};
+  return S.set.ana;
+}
+const anaCache = () => (S.cache.ana || (S.cache.ana = {t:0, inst:{}}));
+
+async function yahoo(sym, iv, rg){
+  let last;
+  for (const host of ['query1', 'query2']){
+    try{
+      const j = await getJSON(`https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=${iv}&range=${rg}&includePrePost=false`);
+      const r = j.chart && j.chart.result && j.chart.result[0]; if (!r) throw new Error('brak danych');
+      const q = r.indicators.quote[0], ts = r.timestamp || [], bars = [];
+      for (let i = 0; i < ts.length; i++) if (q.close[i] != null && q.open[i] != null)
+        bars.push({t:ts[i]*1000, o:q.open[i], h:q.high[i], l:q.low[i], c:q.close[i]});
+      return {bars, price:r.meta.regularMarketPrice, prev:r.meta.chartPreviousClose};
+    }catch(e){ last = e; }
+  }
+  throw last;
+}
+function toH4(bars){   // świece 4h z godzinowych (podział wg pełnych 4 godzin UTC)
+  const out = [];
+  for (const b of bars){
+    const k = Math.floor(b.t / (4*HOUR)), o = out[out.length - 1];
+    if (o && o.k === k){ o.h = Math.max(o.h, b.h); o.l = Math.min(o.l, b.l); o.c = b.c; }
+    else out.push({k, t:b.t, o:b.o, h:b.h, l:b.l, c:b.c});
+  }
+  return out;
+}
+const smaLast = (bars, n) => bars.length < n ? null : bars.slice(-n).reduce((a, b) => a + b.c, 0) / n;
+
+function findGaps(d, minPct){   // otwarte luki z dziennych świec: cena nie wróciła do zamknięcia poprzedniej sesji
+  const out = [];
+  for (let i = 1; i < d.length; i++){
+    const pc = d[i-1].c, op = d[i].o, g = op - pc;
+    if (Math.abs(g) / pc * 100 < minPct) continue;
+    let filled = false;
+    for (let j = i; j < d.length && !filled; j++) filled = g > 0 ? d[j].l <= pc : d[j].h >= pc;
+    if (!filled) out.push({t:d[i].t, up:g > 0, gap:g, pc, op});
+  }
+  return out.slice(-8);
+}
+
+async function syncInstrument(key){
+  const A = anaSet(), I = INSTR[key]; if (!I) return;
+  const res = {t:Date.now(), tf:{}, gaps:[], price:null, err:''};
+  const fetched = {};
+  for (const [tf, iv, rg] of TFS){
+    const k = iv + rg;
+    try{
+      if (!fetched[k]) fetched[k] = await yahoo(I.y, iv, rg);
+      const y = fetched[k]; let bars = y.bars;
+      if (tf === 'H4') bars = toH4(bars);
+      if (y.price) res.price = y.price;
+      const f = smaLast(bars, A.fast), s = smaLast(bars, A.slow);
+      res.tf[tf] = f && s ? {f, s, diff:(f - s) / s * 100, dir:f > s ? 1 : -1} : null;
+      if (tf === 'D1') res.gaps = findGaps(bars, A.gapMin);
+      if (tf === 'D1' && !res.price && bars.length) res.price = bars[bars.length - 1].c;
+    }catch(e){ res.tf[tf] = null; res.err = String(e.message || e); }
+  }
+  const prev = (anaCache().inst[key] || {});
+  anaCache().inst[key] = res;
+  // powiadomienie: wszystkie interwały zgodne (nowy stan)
+  const dirs = TFS.map(([tf]) => res.tf[tf] && res.tf[tf].dir), all = dirs.every(d => d === 1) ? 1 : dirs.every(d => d === -1) ? -1 : 0;
+  if (A.alertAlign && all && prev.align !== all && prev.t)
+    Native.test((all > 0 ? '▲ ' : '▼ ') + I.n + ': wszystkie interwały ' + (all > 0 ? 'wzrostowe' : 'spadkowe'), `SMA ${A.fast}/${A.slow} na M5, M15, H1, H4 i D1 zgodne. Cena: ${fmtNum(res.price)}`);
+  res.align = all;
+}
+
+async function syncEuwax(){
+  const C = anaCache(); let got = null;
+  for (let back = 0; back < 6 && !got; back++){
+    const d = new Date(Date.now() - back*DAY), k = d.toISOString().slice(0,10);
+    const url = `https://api.onvista.de/api/v1/instruments/INDEX/59198950/times_and_sales?endDate=${k}T23:59:59.000%2B00:00&idNotation=59198950&order=DESC&startDate=${k}T00:00:00.000%2B00:00`;
+    const j = await getJSON(url);
+    const p = (j.price || []), t = (j.datetimePrice || []), ser = [];
+    for (let i = 0; i < p.length; i++) if (p[i] != null && t[i]) ser.push({t:Date.parse(t[i]), v:+p[i]});
+    if (ser.length) got = ser.sort((a, b) => a.t - b.t);
+  }
+  if (!got) throw new Error('brak danych EUWAX');
+  const last = got[got.length - 1];
+  const prev = C.euwax && C.euwax.v;
+  C.euwax = {v:last.v, t:last.t, ser:got.filter((_, i) => i % 5 === 0 || i === got.length - 1).map(x => x.v), hi:Math.max(...got.map(x => x.v)), lo:Math.min(...got.map(x => x.v))};
+  const A = anaSet();
+  if (A.euwaxAlert && prev != null && Math.abs(prev) < A.euwaxAlert && Math.abs(last.v) >= A.euwaxAlert)
+    Native.test('EUWAX Sentiment ' + fmtNum(last.v, 1), last.v > 0 ? 'Prywatni inwestorzy mocno nastawieni na wzrosty DAX (sygnał kontrariański).' : 'Prywatni inwestorzy mocno nastawieni na spadki DAX (sygnał kontrariański).');
+}
+
+async function syncFG(){
+  const j = await getJSON('https://production.dataviz.cnn.io/index/fearandgreed/graphdata');
+  const f = j.fear_and_greed; if (!f) throw new Error('zła odpowiedź CNN');
+  const comp = [['market_momentum_sp500','Momentum S&P 500'],['stock_price_strength','Siła cen akcji'],['stock_price_breadth','Szerokość rynku'],
+    ['put_call_options','Opcje put/call'],['market_volatility_vix','Zmienność (VIX)'],['junk_bond_demand','Popyt na obligacje śmieciowe'],['safe_haven_demand','Popyt na bezpieczne aktywa']]
+    .filter(([k]) => j[k]).map(([k, n]) => ({n, s:j[k].score, r:j[k].rating}));
+  anaCache().fg = {s:f.score, r:f.rating, w:f.previous_1_week, m:f.previous_1_month, m3:f.previous_3_months, y:f.previous_1_year, t:Date.parse(f.timestamp) || Date.now(), comp};
+}
+async function syncVIX(){
+  const y = await yahoo('^VIX', '1d', '1mo');
+  const b = y.bars; anaCache().vix = {v:y.price || (b.length && b[b.length-1].c), prev:b.length > 1 ? b[b.length-2].c : null};
+}
+
+let anaBusy = false;
+async function syncAna(force){
+  const A = anaSet(), C = anaCache();
+  if (!A.on || anaBusy || BG || WIDGET) return;
+  if (!force && Date.now() - C.t < A.every*MIN) return;
+  anaBusy = true; C.t = Date.now(); const errs = {};
+  const job = async (name, fn) => { try{ await fn(); }catch(e){ errs[name] = String(e.message || e); } };
+  await Promise.all([job('EUWAX', syncEuwax), job('Fear & Greed', syncFG), job('VIX', syncVIX)]);
+  for (const k of A.inst) await job(k, () => syncInstrument(k));
+  C.errs = errs; save(); anaBusy = false;
+  if (tab === 'ana') render();
+  if (force) toast(Object.keys(errs).length ? 'Analiza: błąd ' + Object.keys(errs).join(', ') : 'Analiza zaktualizowana');
+}
+
+/* ---------- prezentacja ---------- */
+const fmtNum = (v, d) => v == null || isNaN(v) ? '–' : Number(v).toLocaleString('pl-PL', {minimumFractionDigits:d == null ? 1 : d, maximumFractionDigits:d == null ? 1 : d});
+const FG_PL = {'extreme fear':'Skrajny strach', 'fear':'Strach', 'neutral':'Neutralnie', 'greed':'Chciwość', 'extreme greed':'Skrajna chciwość'};
+const fgColor = s => s < 25 ? '#c0392b' : s < 45 ? '#e8534a' : s < 55 ? '#8a93a8' : s < 75 ? '#3fae6a' : '#1e8f4a';
+const euwaxTxt = v => v <= -50 ? ['MOCNO BEARISH', 'Prywatni gracze mocno grają na spadki'] : v < -10 ? ['BEARISH', 'Prywatni gracze nastawieni na spadki'] :
+  v <= 10 ? ['NEUTRALNIE', 'Brak wyraźnej przewagi'] : v < 50 ? ['BULLISH', 'Prywatni gracze nastawieni na wzrosty'] : ['MOCNO BULLISH', 'Prywatni gracze mocno grają na wzrosty'];
+const vixTxt = v => v < 15 ? ['spokój', 'var(--ok)'] : v < 20 ? ['normalnie', '#8a93a8'] : v < 30 ? ['nerwowo', 'var(--md)'] : ['panika', 'var(--hi)'];
+const ANA_INFO = {
+  euwax:'Euwax Sentiment (Börse Stuttgart) liczy co minutę z zleceń prywatnych inwestorów na produkty lewarowane na DAX (8:05–20:00): +100 = sami kupujący calle (gra na wzrosty), −100 = sami put. Traktowany kontrariańsko: skrajny pesymizm drobnych graczy często pojawia się przy dołkach, skrajny optymizm przy szczytach. Najlepiej jako potwierdzenie albo ostrzeżenie, nie samodzielny sygnał.',
+  fg:'CNN Fear & Greed (0–100) łączy 7 wskaźników rynku USA: momentum S&P 500, siłę i szerokość rynku, opcje put/call, VIX, popyt na obligacje śmieciowe i bezpieczne aktywa. Poniżej 25 skrajny strach, powyżej 75 skrajna chciwość. Też czytany kontrariańsko i z opóźnieniem: liczony na danych dziennych.',
+  vix:'VIX: oczekiwana zmienność S&P 500 na 30 dni z cen opcji. Poniżej 15 spokój, 15–20 normalnie, 20–30 nerwowo, powyżej 30 panika. Wysoki VIX = większe świece i szersze stopy także na DAX.',
+  trend:'Trend SMA: szybka średnia (domyślnie 33) powyżej wolnej (144) = BULL, poniżej = BEAR, na każdym interwale osobno. „Różnica” to odległość szybkiej od wolnej w % (im większa, tym silniejszy trend). Zgodność wszystkich interwałów = silny sygnał, mieszane = rynek w korekcie lub konsolidacji. H4 liczone z godzinowych świec. DAX to indeks kasowy (Yahoo nie ma FDAX): poza sesją Xetra M5/M15 stoją, a ceny różnią się od FDAX o premię kontraktu.',
+  gaps:'Otwarta luka: dzienne otwarcie różni się od poprzedniego zamknięcia i cena od tego czasu nie wróciła do tamtego zamknięcia. Luki często są domykane, więc poziom zamknięcia sprzed luki działa jak magnes / cel. „Odległość” = obecna cena minus poziom domknięcia. Dla DAX liczone z sesji Xetra (klasyczne luki 17:30 → 9:00).'
+};
+const infoBtn = k => `<button class="btn sm" style="padding:1px 8px" data-info="${k}">ℹ</button>`;
+const tfCell = (r, compact) => !r ? `<td style="color:var(--mut)">–</td>` :
+  `<td style="color:${r.dir > 0 ? 'var(--ok)' : 'var(--hi)'};font-weight:700">${r.dir > 0 ? '▲' : '▼'}${compact ? '' : ` <small style="color:${r.dir > 0 ? 'var(--ok)' : 'var(--hi)'}">${r.diff > 0 ? '+' : ''}${fmtNum(r.diff, 2)}%</small>`}</td>`;
+function alignTxt(r){
+  const d = TFS.map(([tf]) => r.tf[tf] && r.tf[tf].dir).filter(Boolean), up = d.filter(x => x > 0).length, dn = d.filter(x => x < 0).length;
+  if (d.length === TFS.length && !dn) return ['SILNY SYGNAŁ: wszystkie interwały wzrostowe', 'var(--ok)'];
+  if (d.length === TFS.length && !up) return ['SILNY SYGNAŁ: wszystkie interwały spadkowe', 'var(--hi)'];
+  return [`Mieszany sygnał: ${up}× BULL / ${dn}× BEAR`, 'var(--mut)'];
+}
+function barCenter(v){   // pasek −100…+100 od środka
+  const w = Math.min(50, Math.abs(v) / 2);
+  return `<div style="position:relative;height:12px;background:#22283a;border-radius:6px;margin:8px 0 2px">
+    <div style="position:absolute;top:0;bottom:0;${v < 0 ? 'right:50%' : 'left:50%'};width:${w}%;background:${v < 0 ? 'var(--hi)' : 'var(--ok)'};border-radius:6px"></div>
+    <div style="position:absolute;left:50%;top:-3px;bottom:-3px;width:2px;background:#fff"></div></div>
+    <div class="row" style="justify-content:space-between;font-size:11px;color:var(--mut)"><span>−100</span><span>0</span><span>+100</span></div>`;
+}
+function barFG(s){
+  return `<div style="position:relative;height:12px;border-radius:6px;margin:8px 0 2px;background:linear-gradient(90deg,#b3261e 0%,#e8534a 30%,#7d8596 50%,#3fae6a 70%,#1e8f4a 100%)">
+    <div style="position:absolute;left:calc(${Math.max(0, Math.min(100, s))}% - 6px);top:-6px;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:8px solid #fff"></div></div>
+    <div class="row" style="justify-content:space-between;font-size:11px;color:var(--mut)"><span>0</span><span>25</span><span>50</span><span>75</span><span>100</span></div>`;
+}
+function spark(arr){
+  if (!arr || arr.length < 2) return '';
+  const w = 280, h = 36, mn = Math.min(-10, ...arr), mx = Math.max(10, ...arr), y = v => h - (v - mn) / (mx - mn) * h;
+  const pts = arr.map((v, i) => `${(i / (arr.length - 1) * w).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;margin-top:6px"><line x1="0" x2="${w}" y1="${y(0)}" y2="${y(0)}" stroke="#3a4258" stroke-dasharray="3 3"/>
+    <polyline points="${pts}" fill="none" stroke="var(--acc)" stroke-width="1.5"/></svg>`;
+}
+const when = t => t ? new Date(t).toLocaleString('pl-PL', {day:'numeric', month:'numeric', hour:'2-digit', minute:'2-digit'}) : '';
+
+function vAnaly(){
+  const A = anaSet(), C = anaCache(), errs = C.errs || {};
+  const err = k => errs[k] ? `<div style="color:var(--bad);font-size:12px;margin-top:4px">Błąd pobierania: ${esc(errs[k])}</div>` : '';
+  let h = '';
+  const E = C.euwax;
+  h += `<div class="card"><div class="row"><b style="flex:1">EUWAX Sentiment (DAX)</b>${infoBtn('euwax')}</div>${E ? (() => { const [t, d] = euwaxTxt(E.v);
+    return `<div class="row" style="margin-top:8px;align-items:flex-end;gap:16px"><div style="font-size:40px;font-weight:800;line-height:1;color:${E.v < 0 ? 'var(--hi)' : 'var(--ok)'}">${E.v > 0 ? '+' : ''}${fmtNum(E.v, 1)}</div>
+      <div><b style="color:${E.v < 0 ? 'var(--hi)' : E.v > 10 ? 'var(--ok)' : 'var(--mut)'}">${t}</b><br><small>${d}</small></div></div>${barCenter(E.v)}${spark(E.ser)}
+      <small>Dziś: min ${fmtNum(E.lo, 1)} · max ${fmtNum(E.hi, 1)} · ${when(E.t)} · Börse Stuttgart przez ONVISTA</small>`; })() : '<small>Brak danych</small>'}${err('EUWAX')}</div>`;
+  const F = C.fg;
+  h += `<div class="card"><div class="row"><b style="flex:1">CNN Fear & Greed (USA)</b>${infoBtn('fg')}</div>${F ? `
+    <div class="row" style="margin-top:8px;align-items:flex-end;gap:16px"><div style="font-size:40px;font-weight:800;line-height:1;color:${fgColor(F.s)}">${Math.round(F.s)}</div>
+      <div><b style="color:${fgColor(F.s)}">${(FG_PL[F.r] || F.r).toUpperCase()}</b><br><small>0 = skrajny strach · 100 = skrajna chciwość</small></div></div>${barFG(F.s)}
+    <small>Tydzień temu: ${fmtNum(F.w, 0)} · miesiąc: ${fmtNum(F.m, 0)}${F.m3 != null ? ' · 3 mies.: ' + fmtNum(F.m3, 0) : ''}${F.y != null ? ' · rok: ' + fmtNum(F.y, 0) : ''}</small>
+    <table style="width:100%;margin-top:10px;font-size:13px;border-collapse:collapse">${F.comp.map(c => `<tr><td style="padding:3px 0">${esc(c.n)}</td><td style="width:34px;text-align:right;color:${fgColor(c.s)}">${Math.round(c.s)}</td>
+      <td style="width:42%;padding-left:10px"><div style="height:7px;background:#22283a;border-radius:4px"><div style="height:7px;width:${Math.max(2, c.s)}%;background:${fgColor(c.s)};border-radius:4px"></div></div></td>
+      <td style="width:28%;padding-left:8px;color:${fgColor(c.s)};font-size:12px">${FG_PL[c.r] || esc(c.r)}</td></tr>`).join('')}</table>` : '<small>Brak danych</small>'}${err('Fear & Greed')}</div>`;
+  const V = C.vix;
+  if (V) { const [vt, vc] = vixTxt(V.v);
+    h += `<div class="card row"><b style="flex:1">VIX</b><span style="font-size:22px;font-weight:700;color:${vc}">${fmtNum(V.v, 2)}</span><span style="color:${vc}">${vt}</span>
+      ${V.prev ? `<small>${V.v >= V.prev ? '+' : ''}${fmtNum(V.v - V.prev, 2)} d/d</small>` : ''}${infoBtn('vix')}</div>`; }
+  else if (errs.VIX) h += `<div class="card"><b>VIX</b>${err('VIX')}</div>`;
+  for (const k of A.inst){
+    const I = INSTR[k], r = (C.inst || {})[k]; if (!I) continue;
+    h += `<div class="day" style="margin-top:18px"><span>${esc(I.d)}</span><span class="wk">${r ? when(r.t) : ''}</span></div>`;
+    if (!r){ h += `<div class="card"><small>Brak danych${errs[k] ? ': ' + esc(errs[k]) : ''}</small></div>`; continue; }
+    const [at, ac] = alignTxt(r);
+    h += `<div class="card"><div class="row"><b style="flex:1">Trend SMA ${A.fast}/${A.slow}</b><span>Cena: <b>${fmtNum(r.price, 1)}</b></span>${infoBtn('trend')}</div>
+      <table style="width:100%;margin-top:8px;font-size:13px;border-collapse:collapse;text-align:center">
+        <tr style="color:var(--mut);font-size:12px">${TFS.map(([tf]) => `<td>${tf}</td>`).join('')}</tr><tr style="font-size:15px">${TFS.map(([tf]) => tfCell(r.tf[tf])).join('')}</tr>
+        <tr style="color:var(--mut);font-size:11px">${TFS.map(([tf]) => `<td>${r.tf[tf] ? fmtNum(r.tf[tf].f, 1) + '<br>' + fmtNum(r.tf[tf].s, 1) : ''}</td>`).join('')}</tr></table>
+      <div style="margin-top:8px;padding:7px 10px;border:1px solid ${ac === 'var(--mut)' ? 'var(--line)' : ac};border-radius:8px;color:${ac};font-size:13px">${at}</div>
+      <div class="row" style="margin-top:12px"><b style="flex:1">Otwarte luki</b>${infoBtn('gaps')}</div>
+      ${r.gaps.length ? `<table style="width:100%;margin-top:6px;font-size:12px;border-collapse:collapse"><tr style="color:var(--mut)"><td>Data</td><td>Typ</td><td>Luka</td><td>Domknięcie</td><td>Odległość</td></tr>
+        ${r.gaps.slice().reverse().map(g => { const dist = r.price - g.pc; return `<tr><td>${new Date(g.t).toLocaleDateString('pl-PL')}</td>
+          <td style="color:${g.up ? 'var(--ok)' : 'var(--hi)'}">${g.up ? 'UP' : 'DN'}</td><td style="color:${g.up ? 'var(--ok)' : 'var(--hi)'}">${g.gap > 0 ? '+' : ''}${fmtNum(g.gap, 1)}</td>
+          <td>${fmtNum(g.pc, 1)}</td><td>${dist > 0 ? '+' : ''}${fmtNum(dist, 1)}</td></tr>`; }).join('')}</table>` : '<small>Brak otwartych luk (min. ' + fmtNum(A.gapMin, 2) + '%)</small>'}
+      ${r.err ? `<div style="color:var(--bad);font-size:12px;margin-top:4px">Część danych: ${esc(r.err)}</div>` : ''}</div>`;
+  }
+  h += `<div class="card"><b>Ustawienia analizy</b>
+    <label>Instrumenty</label><div class="chips" id="aIn">${Object.entries(INSTR).map(([k, I]) => `<button class="chip ${A.inst.includes(k) ? 'on' : ''}" data-k="${k}">${esc(I.n)}</button>`).join('')}</div>
+    <div class="row" style="margin-top:6px"><div><label>SMA szybka</label><input type="number" id="aF" value="${A.fast}" style="width:90px"></div><div><label>SMA wolna</label><input type="number" id="aS" value="${A.slow}" style="width:90px"></div>
+      <div><label>Min. luka %</label><input type="number" step="0.05" id="aG" value="${A.gapMin}" style="width:90px"></div><div><label>Odświeżaj co (min)</label><input type="number" id="aE" value="${A.every}" min="1" style="width:90px"></div></div>
+    <div class="row" style="margin-top:10px"><button class="chip ${A.alertAlign ? 'on' : ''}" id="aAl">Powiadom, gdy wszystkie interwały zgodne</button>
+      <label style="margin:0">Powiadom, gdy EUWAX przekroczy ±</label><input type="number" id="aEu" value="${A.euwaxAlert || ''}" placeholder="np. 50" style="width:80px"></div>
+    <small>Ceny: Yahoo Finance (opóźnienie do kilkunastu minut, DAX = indeks kasowy). EUWAX: Börse Stuttgart przez ONVISTA. Fear & Greed: CNN. Źródła nieoficjalne, mogą się zmienić.</small></div>
+    <p style="text-align:center"><small>Dane informacyjne, nie stanowią porady inwestycyjnej.</small></p>`;
+  $('#view').innerHTML = h;
+  $('#view').querySelectorAll('[data-info]').forEach(b => b.onclick = ev => { ev.stopPropagation(); sheet(`<h2>Jak czytać</h2><p>${esc(ANA_INFO[b.dataset.info])}</p>`); });
+  $('#aIn').onclick = e => { const b = e.target.closest('[data-k]'); if (!b) return; const k = b.dataset.k, i = A.inst.indexOf(k);
+    i >= 0 ? A.inst.splice(i, 1) : A.inst.push(k); save(); render(); if (i < 0) syncAna(true); };
+  const num = (id, key, mn) => $(id).onchange = e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v >= mn){ A[key] = v; save(); syncAna(true); } };
+  num('#aF', 'fast', 2); num('#aS', 'slow', 3); num('#aG', 'gapMin', 0); num('#aE', 'every', 1);
+  $('#aAl').onclick = () => { A.alertAlign = !A.alertAlign; save(); render(); };
+  $('#aEu').onchange = e => { A.euwaxAlert = Math.max(0, Math.min(100, +e.target.value || 0)); save(); };
+}
+
+// Kompaktowa wersja do widgetu
+function anaCompactHTML(){
+  const A = anaSet(), C = anaCache(), E = C.euwax, F = C.fg, V = C.vix;
+  let h = '<div class="wd">Sentyment</div><div style="padding:2px 12px 6px">';
+  if (E){ const [t] = euwaxTxt(E.v); h += `<div class="row" style="gap:6px"><span style="min-width:62px">EUWAX</span><b style="color:${E.v < 0 ? 'var(--hi)' : 'var(--ok)'}">${E.v > 0 ? '+' : ''}${fmtNum(E.v, 1)}</b><small>${t.toLowerCase()}</small></div>${barCenter(E.v).split('<div class="row"')[0]}`; }
+  if (F) h += `<div class="row" style="gap:6px;margin-top:4px"><span style="min-width:62px">F&G (US)</span><b style="color:${fgColor(F.s)}">${Math.round(F.s)}</b><small>${(FG_PL[F.r] || F.r).toLowerCase()}</small></div>${barFG(F.s).split('<div class="row"')[0]}`;
+  if (V){ const [vt, vc] = vixTxt(V.v); h += `<div class="row" style="gap:6px;margin-top:4px"><span style="min-width:62px">VIX</span><b style="color:${vc}">${fmtNum(V.v, 2)}</b><small>${vt}</small></div>`; }
+  h += `</div><div class="wd">Trend SMA ${A.fast}/${A.slow}</div><table style="width:100%;font-size:12px;border-collapse:collapse;text-align:center;margin:0 0 4px">
+    <tr style="color:var(--mut);font-size:10px"><td style="text-align:left;padding-left:12px"></td>${TFS.map(([tf]) => `<td>${tf}</td>`).join('')}</tr>`;
+  for (const k of A.inst){ const r = (C.inst || {})[k]; if (!r || !INSTR[k]) continue;
+    const al = r.align; h += `<tr><td style="text-align:left;padding:2px 0 2px 12px;font-weight:600;color:${al > 0 ? 'var(--ok)' : al < 0 ? 'var(--hi)' : 'var(--tx)'}">${esc(INSTR[k].n)}</td>${TFS.map(([tf]) => tfCell(r.tf[tf], true)).join('')}</tr>`; }
+  h += '</table><div class="wd">Najbliższe otwarte luki</div><div style="padding:0 12px 8px;font-size:12px">';
+  let any = false;
+  for (const k of A.inst){ const r = (C.inst || {})[k]; if (!r || !r.gaps || !r.gaps.length) continue;
+    const g = r.gaps.slice().sort((a, b) => Math.abs(r.price - a.pc) - Math.abs(r.price - b.pc))[0], dist = r.price - g.pc; any = true;
+    h += `<div class="row" style="gap:6px"><b style="min-width:46px">${esc(INSTR[k].n)}</b><span style="color:${g.up ? 'var(--ok)' : 'var(--hi)'}">${g.up ? 'UP' : 'DN'}</span><span>${fmtNum(g.pc, 1)}</span><small>(${dist > 0 ? '+' : ''}${fmtNum(dist, 1)})</small><small>${r.gaps.length > 1 ? '+' + (r.gaps.length - 1) : ''}</small></div>`; }
+  if (!any) h += '<small>Brak otwartych luk</small>';
+  return h + `</div><div style="padding:0 12px 8px"><small>${C.t ? 'Analiza: ' + when(C.t) : 'Analiza: brak danych'}</small></div>`;
+}
+
 /* ---------- Windows: mini-widget na pulpicie i podpowiedź ikony w zasobniku ---------- */
 function nextHigh(){ const now = Date.now(); return visible().find(e => !e.allDay && e.start > now && IMP[e.impact] >= 3); }
 function trayTip(){
@@ -1128,8 +1386,8 @@ function startWidget(){
   document.body.classList.add('widget');
   const W = $('#wg');
   const post = u => fetch(u, {method:'POST'}).catch(() => {});
-  let alert = null, corner = '', pinMenu = false;
-  fetch('/api/widget').then(r => r.json()).then(j => { corner = j.corner || ''; draw(); }).catch(() => {});
+  let alert = null, corner = '', pinMenu = false, expanded = false;
+  fetch('/api/widget').then(r => r.json()).then(j => { corner = j.corner || ''; expanded = !!j.expanded; draw(); }).catch(() => {});
   const CORNERS = [['', '✥ Swobodnie (przeciągaj)'], ['tl', '↖ Lewy górny róg'], ['tr', '↗ Prawy górny róg'], ['bl', '↙ Lewy dolny róg'], ['br', '↘ Prawy dolny róg']];
   const HT = {l:10, r:11, t:12, tl:13, tr:14, b:15, bl:16, br:17};
   const draw = () => {
@@ -1154,11 +1412,15 @@ function startWidget(){
         <div class="tm">${hm(e.start)}${st ? `<small>${st.hm} ${esc(st.short)}</small>` : ''}</div><div>${e.ccy ? `<span class="ccy">${esc(e.ccy)}</span>` : ''}${esc(e.title)}</div></div>`;
     }
     if (!list.length && !allday.length) html += '<div class="wd" style="text-transform:none">Dziś i jutro brak ważnych wydarzeń</div>';
+    html += '</div>';
+    html += `<div class="wx" id="wgE">${expanded ? '▴ Zwiń analizę' : '▾ Analiza rynku'}</div>`;
+    if (expanded) html += `<div class="wana">${anaCompactHTML()}</div>`;
     if (pinMenu) html += `<div class="pm">${CORNERS.map(([k, n]) => `<button data-c="${k}" class="${k === corner ? 'on' : ''}">${n}</button>`).join('')}</div>`;
     html += Object.keys(HT).map(k => `<div class="rz ${k}" data-rz="${k}"></div>`).join('');
-    W.innerHTML = html + '</div>';
+    W.innerHTML = html;
     W.querySelectorAll('[data-rz]').forEach(g => g.onmousedown = e => { if (e.button === 0 && window.wgResize){ e.preventDefault(); window.wgResize(HT[g.dataset.rz]); } });
     $('#wgP').onclick = () => { pinMenu = !pinMenu; draw(); };
+    $('#wgE').onclick = () => { expanded = !expanded; draw(); fetch('/api/widget', {method:'POST', body:JSON.stringify({expanded})}).catch(() => {}); };
     W.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { corner = b.dataset.c; pinMenu = false;
       fetch('/api/widget', {method:'POST', body:JSON.stringify({corner})}).catch(() => {}); draw(); });
     $('#wgH').onmousedown = e => { if (e.button === 0 && !e.target.closest('button') && window.wgDrag){ window.wgDrag();
@@ -1179,7 +1441,7 @@ function startWidget(){
 // Android: dodatkowo zadanie w tle (JobScheduler) działa przy zamkniętej apce. Windows: gdy program jest uruchomiony (także zminimalizowany).
 const stale = () => Date.now() - S.set.lastSync > (S.set.syncEvery ? S.set.syncEvery * MIN : HOUR);
 window.onNativeResume = () => { if (stale()) syncAll(false, true); else render(); };
-if (!WIDGET) setInterval(() => { if (S.set.syncEvery && stale()) syncAll(false, true); else if (tab === 'up' && $('#sheet').style.display !== 'block') render(); }, 60000);
+if (!WIDGET) setInterval(() => { if (S.set.syncEvery && stale()) syncAll(false, true); else if (tab === 'up' && $('#sheet').style.display !== 'block') render(); syncAna(false); }, 60000);
 
 // Windows: przypomnienia pokazywane też w oknie programu (gdyby toast systemowy był wyłączony)
 if (IS_WIN && !WIDGET) setInterval(() => fetch('/api/fired').then(r => r.json()).then(list => {
@@ -1197,6 +1459,7 @@ if (WIDGET){
   Native.setBgSync(S.set.syncEvery);
   if (Native.notifyState() === 'ask') Native.askNotify();
   syncAll(false, stale());
+  setTimeout(() => syncAna(false), 3000);
   if (IS_WIN){ trayTip(); setInterval(trayTip, 60000); }
 }
 </script>

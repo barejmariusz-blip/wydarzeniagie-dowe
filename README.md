@@ -44,6 +44,18 @@ Kliknięcie wydarzenia pokazuje opis: co to jest, jak czytać odczyt względem p
 
 W Ustawieniach jest też słownik pojęć. Wagi spółek są orientacyjne (`WEIGHTS`, `DAX_W` w `ui/index.html`) i warto je aktualizować co kwartał.
 
+## Analiza rynku
+
+Zakładka **Analiza** (Windows, Android) i rozwijany dolny panel widgetu („▾ Analiza rynku”):
+- **EUWAX Sentiment (DAX):** −100…+100, nastawienie prywatnych graczy z produktów lewarowanych (Börse Stuttgart przez API ONVISTA), z przebiegiem dnia.
+- **CNN Fear & Greed:** wynik 0–100, 7 składowych i historia (tydzień, miesiąc, rok).
+- **VIX:** poziom i ocena (spokój / nerwowo / panika).
+- **Trend SMA 33/144** na M5, M15, H1, H4, D1 dla wybranych instrumentów (domyślnie DAX, NQ, ES, YM, do tego FTSE, Nikkei, złoto, ropa, EURUSD) i sygnał zgodności interwałów.
+- **Otwarte luki** z dziennych świec, z poziomem domknięcia i odległością od ceny.
+- Opcjonalne powiadomienia: zgodność wszystkich interwałów, przekroczenie progu EUWAX.
+
+Ceny z Yahoo Finance (z opóźnieniem, DAX jako indeks kasowy, bo Yahoo nie ma FDAX). Wszystkie trzy źródła są nieoficjalne i mogą się zmienić.
+
 ## Filtry i przypomnienia
 
 - Filtry: rynki, kategorie, minimalny wpływ, waluty, wystąpienia bankierów, ukrywanie po słowach w tytule i ukrywanie pojedynczych wydarzeń. Przycisk **● High** w nagłówku szybko zawęża wszystko do wysokiego wpływu.
