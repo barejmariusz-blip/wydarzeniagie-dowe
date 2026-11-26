@@ -3,7 +3,10 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/base64"
+	"fmt"
+	"path/filepath"
 	"os"
 	"os/exec"
 	"strings"
@@ -55,6 +58,7 @@ func alarmLoop() {
 		amu.Unlock()
 		for _, a := range due {
 			toast(a.Title, a.Body)
+			notifyUI(a)
 		}
 		time.Sleep(15 * time.Second)
 	}
@@ -65,27 +69,88 @@ func xmlEsc(s string) string {
 	return r.Replace(s)
 }
 
-// Powiadomienie Windows (toast) przez PowerShell — bez dodatkowych bibliotek.
-func toast(title, body string) {
-	xml := `<toast><visual><binding template="ToastGeneric"><text>` + xmlEsc(title) + `</text><text>` + xmlEsc(body) +
-		`</text><text placement="attribution">Wydarzenia Giełdowe</text></binding></visual><audio src="ms-winsoundevent:Notification.Reminder"/></toast>`
-	script := `[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
-[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
-$x = New-Object Windows.Data.Xml.Dom.XmlDocument
-$x.LoadXml('` + strings.ReplaceAll(xml, "'", "''") + `')
-$t = [Windows.UI.Notifications.ToastNotification]::new($x)
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe').Show($t)`
+//go:embed assets/icon.png
+var iconPNG []byte
+
+const appID = "PanRodla.WydarzeniaGieldowe"
+const psAppID = `{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe`
+
+// Rejestruje własny identyfikator aplikacji dla powiadomień (bez instalatora):
+// HKCU\Software\Classes\AppUserModelId\<id> z nazwą i ikoną. Dzięki temu toast ma nazwę
+// „Wydarzenia Giełdowe” i własny przełącznik w Ustawienia → System → Powiadomienia.
+func registerAppID() {
+	icon := ""
+	if dir := os.Getenv("LOCALAPPDATA"); dir != "" {
+		p := filepath.Join(dir, "WydarzeniaGieldowe", "icon.png")
+		if os.MkdirAll(filepath.Dir(p), 0755) == nil && os.WriteFile(p, iconPNG, 0644) == nil {
+			icon = p
+		}
+	}
+	k, _, err := registry.CreateKey(registry.CURRENT_USER, `Software\Classes\AppUserModelId\`+appID, registry.SET_VALUE)
+	if err != nil {
+		return
+	}
+	defer k.Close()
+	k.SetStringValue("DisplayName", appName)
+	if icon != "" {
+		k.SetStringValue("IconUri", icon)
+	}
+	k.SetStringValue("IconBackgroundColor", "FF1A1F2B")
+	k.SetDWordValue("ShowInSettings", 1)
+}
+
+func runPS(script string) (string, error) {
 	u := utf16.Encode([]rune(script))
 	b := make([]byte, len(u)*2)
 	for i, c := range u {
 		b[2*i] = byte(c)
 		b[2*i+1] = byte(c >> 8)
 	}
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", base64.StdEncoding.EncodeToString(b))
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-EncodedCommand", base64.StdEncoding.EncodeToString(b))
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000} // CREATE_NO_WINDOW
-	if err := cmd.Run(); err != nil {
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+// Powiadomienie Windows (toast) przez PowerShell — bez dodatkowych bibliotek.
+// Zwraca stan powiadomień dla aplikacji ("Enabled", "DisabledForUser"…) albo błąd.
+func toast(title, body string) (string, error) {
+	xml := `<toast scenario="reminder"><visual><binding template="ToastGeneric"><text>` + xmlEsc(title) + `</text><text>` + xmlEsc(body) +
+		`</text></binding></visual><actions><action content="OK" arguments="dismiss" activationType="system"/></actions>` +
+		`<audio src="ms-winsoundevent:Notification.Reminder"/></toast>`
+	try := func(id string) (string, error) {
+		script := `$ErrorActionPreference = 'Stop'
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
+$x = New-Object Windows.Data.Xml.Dom.XmlDocument
+$x.LoadXml('` + strings.ReplaceAll(xml, "'", "''") + `')
+$t = [Windows.UI.Notifications.ToastNotification]::new($x)
+$n = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('` + id + `')
+$n.Show($t)
+Write-Output $n.Setting`
+		out, err := runPS(script)
+		if err != nil {
+			if out == "" {
+				out = err.Error()
+			}
+			return "", fmt.Errorf("%s", out)
+		}
+		lines := strings.Split(out, "\n")
+		return strings.TrimSpace(lines[len(lines)-1]), nil
+	}
+	st, err := try(appID)
+	if err != nil || st != "Enabled" {
+		// zapasowo: identyfikator Windows PowerShell (zawsze zarejestrowany)
+		if st2, err2 := try(psAppID); err2 == nil && st2 == "Enabled" {
+			return st2, nil
+		} else if err == nil {
+			return st, nil
+		}
+	}
+	if err != nil {
 		msgBeep()
 	}
+	return st, err
 }
 
 func msgBeep() { syscall.NewLazyDLL("user32.dll").NewProc("MessageBeep").Call(0x40) }
@@ -135,4 +200,29 @@ func focusExisting() {
 		user32.NewProc("ShowWindow").Call(h, 9) // SW_RESTORE
 		user32.NewProc("SetForegroundWindow").Call(h)
 	}
+}
+
+var (
+	fmu       sync.Mutex
+	firedList []alarm
+)
+
+func notifyUI(a alarm) {
+	fmu.Lock()
+	firedList = append(firedList, a)
+	if len(firedList) > 20 {
+		firedList = firedList[len(firedList)-20:]
+	}
+	fmu.Unlock()
+}
+
+func takeFired() []alarm {
+	fmu.Lock()
+	defer fmu.Unlock()
+	out := firedList
+	firedList = nil
+	if out == nil {
+		out = []alarm{}
+	}
+	return out
 }

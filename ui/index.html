@@ -188,7 +188,13 @@ const Native = {
   askNotify(){ if (IS_ANDROID) Android.askNotify(); },
   test(t, b){
     if (IS_ANDROID) Android.test(t, b);
-    else if (IS_WIN) fetch('/api/test', {method:'POST', body:JSON.stringify({title:t, body:b})});
+    else if (IS_WIN){ toast('Wysyłam powiadomienie…');
+      fetch('/api/test', {method:'POST', body:JSON.stringify({title:t, body:b})}).then(r => r.json()).then(j => {
+        const msg = j.error ? 'Błąd powiadomienia Windows: ' + j.error
+          : j.setting === 'Enabled' ? 'Wysłane. Jeśli go nie widzisz: wyłącz tryb „Nie przeszkadzać” albo sprawdź Ustawienia → System → Powiadomienia.'
+          : 'Windows blokuje powiadomienia tej aplikacji (' + j.setting + '). Włącz je w Ustawienia → System → Powiadomienia → Wydarzenia Giełdowe.';
+        sheet(`<h2>Test powiadomienia</h2><p>${esc(msg)}</p><div class="row"><button class="btn" onclick="Native.openUrl('ms-settings:notifications')">Otwórz ustawienia powiadomień</button></div>`);
+      }).catch(e => toast('Błąd: ' + e)); }
     else toast('Powiadomienia działają w apce');
   },
   setBgSync(min){ if (IS_ANDROID && Android.setBgSync) Android.setBgSync(min | 0); },
@@ -1079,6 +1085,11 @@ $('#hiBtn').onclick = () => { S.set.onlyHigh = !S.set.onlyHigh; save(); reschedu
 const stale = () => Date.now() - S.set.lastSync > (S.set.syncEvery ? S.set.syncEvery * MIN : HOUR);
 window.onNativeResume = () => { if (stale()) syncAll(false, true); else render(); };
 setInterval(() => { if (S.set.syncEvery && stale()) syncAll(false, true); else if (tab === 'up' && $('#sheet').style.display !== 'block') render(); }, 60000);
+
+// Windows: przypomnienia pokazywane też w oknie programu (gdyby toast systemowy był wyłączony)
+if (IS_WIN) setInterval(() => fetch('/api/fired').then(r => r.json()).then(list => {
+  for (const a of list) sheet(`<h2>${esc(a.title)}</h2><p style="white-space:pre-wrap">${esc(a.body)}</p><div class="row"><button class="btn acc" onclick="closeSheet()">OK</button></div>`);
+}).catch(() => {}), 15000);
 
 if (BG){
   // Uruchomione przez zadanie w tle na Androidzie: synchronizacja, przeplanowanie przypomnień, koniec.

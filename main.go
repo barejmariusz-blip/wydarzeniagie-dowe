@@ -103,11 +103,19 @@ func serve(ln net.Listener) {
 		setAlarms(list)
 		jsonOut(w, map[string]any{"ok": true, "count": len(list)})
 	})
+	// Przypomnienia, które właśnie się odpaliły: UI pokazuje je też w oknie (zapas, gdy toast jest wyłączony)
+	mux.HandleFunc("/api/fired", func(w http.ResponseWriter, r *http.Request) {
+		jsonOut(w, takeFired())
+	})
 	mux.HandleFunc("/api/test", func(w http.ResponseWriter, r *http.Request) {
 		var a alarm
 		json.NewDecoder(r.Body).Decode(&a)
-		go toast(a.Title, a.Body)
-		jsonOut(w, map[string]bool{"ok": true})
+		st, err := toast(a.Title, a.Body)
+		res := map[string]any{"setting": st}
+		if err != nil {
+			res["error"] = err.Error()
+		}
+		jsonOut(w, res)
 	})
 	mux.HandleFunc("/api/save", func(w http.ResponseWriter, r *http.Request) {
 		name := safeName.ReplaceAllString(r.URL.Query().Get("name"), "_")
@@ -145,6 +153,8 @@ func serve(ln net.Listener) {
 		u := r.URL.Query().Get("u")
 		if strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
 			openExternal(u)
+		} else if u == "ms-settings:notifications" {
+			exec.Command("explorer.exe", u).Start()
 		}
 		jsonOut(w, map[string]bool{"ok": true})
 	})
@@ -178,6 +188,7 @@ func main() {
 			return
 		}
 	}
+	registerAppID()
 	go serve(ln)
 	go alarmLoop()
 
