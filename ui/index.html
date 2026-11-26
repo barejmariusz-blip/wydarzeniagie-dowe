@@ -76,6 +76,9 @@ body.widget #wg{display:flex;flex-direction:column}
 #wg .wl{overflow:auto;flex:1 1 auto;min-height:40px}
 #wg .wx{padding:6px 12px;border-top:1px solid var(--line);color:var(--acc);cursor:pointer;font-size:12px;flex:none}
 #wg .wx:hover{background:#151a26}
+#wg .wt{display:flex;gap:4px;padding:8px 10px 2px;flex-wrap:wrap}
+#wg .wt button{background:#1c2130;border:1px solid var(--line);color:var(--mut);border-radius:14px;padding:3px 9px;font-size:11px;cursor:pointer}
+#wg .wt button.on{color:var(--acc);border-color:var(--acc)}
 #wg .wana{flex:0 1 auto;max-height:65vh;overflow:auto;border-top:1px solid var(--line);background:#0b0e14}
 #wg .wi{display:flex;gap:8px;padding:6px 12px;align-items:flex-start;cursor:pointer}
 #wg .wi:hover{background:#151a26}
@@ -1129,9 +1132,9 @@ $('#hiBtn').onclick = () => { S.set.onlyHigh = !S.set.onlyHigh; save(); reschedu
    ========================================================================= */
 const INSTR = {
   DAX:   {y:'^GDAXI',   n:'DAX',        d:'DAX (indeks kasowy, sesja Xetra)'},
-  NQ:    {y:'NQ=F',     n:'NQ',         d:'Nasdaq 100 – kontrakt NQ (US100)'},
-  ES:    {y:'ES=F',     n:'ES',         d:'S&P 500 – kontrakt ES (US500)'},
-  YM:    {y:'YM=F',     n:'YM',         d:'Dow Jones – kontrakt YM (US30)'},
+  NQ:    {y:'NQ=F',     n:'Nasdaq 100',       d:'Nasdaq 100 – kontrakt NQ (US100)'},
+  ES:    {y:'ES=F',     n:'S&P 500',       d:'S&P 500 – kontrakt ES (US500)'},
+  YM:    {y:'YM=F',     n:'Dow Jones',       d:'Dow Jones – kontrakt YM (US30)'},
   FTSE:  {y:'^FTSE',    n:'FTSE',       d:'FTSE 100 (indeks)'},
   N225:  {y:'^N225',    n:'Nikkei',     d:'Nikkei 225 (indeks)'},
   GC:    {y:'GC=F',     n:'Złoto',      d:'Złoto – kontrakt GC'},
@@ -1140,7 +1143,7 @@ const INSTR = {
 };
 const TFS = [['M5','5m','5d'], ['M15','15m','1mo'], ['H1','60m','6mo'], ['H4','60m','6mo'], ['D1','1d','2y']];
 function anaSet(){
-  if (!S.set.ana) S.set.ana = {on:true, inst:['DAX','NQ','ES','YM'], fast:33, slow:144, gapMin:0.1, every:3, alertAlign:false, euwaxAlert:0};
+  if (!S.set.ana) S.set.ana = {on:true, inst:['DAX','ES','YM','NQ'], fast:33, slow:144, gapMin:0.1, every:3, alertAlign:false, euwaxAlert:0};
   return S.set.ana;
 }
 const anaCache = () => (S.cache.ana || (S.cache.ana = {t:0, inst:{}}));
@@ -1298,55 +1301,76 @@ function spark(arr){
 }
 const when = t => t ? new Date(t).toLocaleString('pl-PL', {day:'numeric', month:'numeric', hour:'2-digit', minute:'2-digit'}) : '';
 
+// Sentyment pasujący do instrumentu: EUWAX dla DAX, Fear & Greed i VIX dla USA, VIX dla reszty
+const SENT = {DAX:['euwax'], ES:['fg','vix'], NQ:['fg','vix'], YM:['fg','vix']};
+const sentOf = k => SENT[k] || ['vix'];
+function anaTabs(){ const A = anaSet(); return A.inst.filter(k => INSTR[k]); }
+
 function vAnaly(){
-  const A = anaSet(), C = anaCache(), errs = C.errs || {};
+  const A = anaSet(), C = anaCache(), errs = C.errs || {}, tabs = anaTabs();
+  if (!A.tab || (A.tab !== 'cfg' && !tabs.includes(A.tab))) A.tab = tabs[0] || 'cfg';
   const err = k => errs[k] ? `<div style="color:var(--bad);font-size:12px;margin-top:4px">Błąd pobierania: ${esc(errs[k])}</div>` : '';
-  let h = '';
-  const E = C.euwax;
-  h += `<div class="card"><div class="row"><b style="flex:1">EUWAX Sentiment (DAX)</b>${infoBtn('euwax')}</div>${E ? (() => { const [t, d] = euwaxTxt(E.v);
-    return `<div class="row" style="margin-top:8px;align-items:flex-end;gap:16px"><div style="font-size:40px;font-weight:800;line-height:1;color:${E.v < 0 ? 'var(--hi)' : 'var(--ok)'}">${E.v > 0 ? '+' : ''}${fmtNum(E.v, 1)}</div>
-      <div><b style="color:${E.v < 0 ? 'var(--hi)' : E.v > 10 ? 'var(--ok)' : 'var(--mut)'}">${t}</b><br><small>${d}</small></div></div>${barCenter(E.v)}${spark(E.ser)}
-      <small>Dziś: min ${fmtNum(E.lo, 1)} · max ${fmtNum(E.hi, 1)} · ${when(E.t)} · Börse Stuttgart przez ONVISTA</small>`; })() : '<small>Brak danych</small>'}${err('EUWAX')}</div>`;
-  const F = C.fg;
-  h += `<div class="card"><div class="row"><b style="flex:1">CNN Fear & Greed (USA)</b>${infoBtn('fg')}</div>${F ? `
-    <div class="row" style="margin-top:8px;align-items:flex-end;gap:16px"><div style="font-size:40px;font-weight:800;line-height:1;color:${fgColor(F.s)}">${Math.round(F.s)}</div>
-      <div><b style="color:${fgColor(F.s)}">${(FG_PL[F.r] || F.r).toUpperCase()}</b><br><small>0 = skrajny strach · 100 = skrajna chciwość</small></div></div>${barFG(F.s)}
-    <small>Tydzień temu: ${fmtNum(F.w, 0)} · miesiąc: ${fmtNum(F.m, 0)}${F.m3 != null ? ' · 3 mies.: ' + fmtNum(F.m3, 0) : ''}${F.y != null ? ' · rok: ' + fmtNum(F.y, 0) : ''}</small>
-    <table style="width:100%;margin-top:10px;font-size:13px;border-collapse:collapse">${F.comp.map(c => `<tr><td style="padding:3px 0">${esc(c.n)}</td><td style="width:34px;text-align:right;color:${fgColor(c.s)}">${Math.round(c.s)}</td>
-      <td style="width:42%;padding-left:10px"><div style="height:7px;background:#22283a;border-radius:4px"><div style="height:7px;width:${Math.max(2, c.s)}%;background:${fgColor(c.s)};border-radius:4px"></div></div></td>
-      <td style="width:28%;padding-left:8px;color:${fgColor(c.s)};font-size:12px">${FG_PL[c.r] || esc(c.r)}</td></tr>`).join('')}</table>` : '<small>Brak danych</small>'}${err('Fear & Greed')}</div>`;
-  const V = C.vix;
-  if (V) { const [vt, vc] = vixTxt(V.v);
-    h += `<div class="card row"><b style="flex:1">VIX</b><span style="font-size:22px;font-weight:700;color:${vc}">${fmtNum(V.v, 2)}</span><span style="color:${vc}">${vt}</span>
-      ${V.prev ? `<small>${V.v >= V.prev ? '+' : ''}${fmtNum(V.v - V.prev, 2)} d/d</small>` : ''}${infoBtn('vix')}</div>`; }
-  else if (errs.VIX) h += `<div class="card"><b>VIX</b>${err('VIX')}</div>`;
-  for (const k of A.inst){
-    const I = INSTR[k], r = (C.inst || {})[k]; if (!I) continue;
-    h += `<div class="day" style="margin-top:18px"><span>${esc(I.d)}</span><span class="wk">${r ? when(r.t) : ''}</span></div>`;
-    if (!r){ h += `<div class="card"><small>Brak danych${errs[k] ? ': ' + esc(errs[k]) : ''}</small></div>`; continue; }
-    const [at, ac] = alignTxt(r);
-    h += `<div class="card"><div class="row"><b style="flex:1">Trend SMA ${A.fast}/${A.slow}</b><span>Cena: <b>${fmtNum(r.price, 1)}</b></span>${infoBtn('trend')}</div>
-      <table style="width:100%;margin-top:8px;font-size:13px;border-collapse:collapse;text-align:center">
-        <tr style="color:var(--mut);font-size:12px">${TFS.map(([tf]) => `<td>${tf}</td>`).join('')}</tr><tr style="font-size:15px">${TFS.map(([tf]) => tfCell(r.tf[tf])).join('')}</tr>
-        <tr style="color:var(--mut);font-size:11px">${TFS.map(([tf]) => `<td>${r.tf[tf] ? fmtNum(r.tf[tf].f, 1) + '<br>' + fmtNum(r.tf[tf].s, 1) : ''}</td>`).join('')}</tr></table>
-      <div style="margin-top:8px;padding:7px 10px;border:1px solid ${ac === 'var(--mut)' ? 'var(--line)' : ac};border-radius:8px;color:${ac};font-size:13px">${at}</div>
-      <div class="row" style="margin-top:12px"><b style="flex:1">Otwarte luki</b>${infoBtn('gaps')}</div>
-      ${r.gaps.length ? `<table style="width:100%;margin-top:6px;font-size:12px;border-collapse:collapse"><tr style="color:var(--mut)"><td>Data</td><td>Typ</td><td>Luka</td><td>Domknięcie</td><td>Odległość</td></tr>
-        ${r.gaps.slice().reverse().map(g => { const dist = r.price - g.pc; return `<tr><td>${new Date(g.t).toLocaleDateString('pl-PL')}</td>
-          <td style="color:${g.up ? 'var(--ok)' : 'var(--hi)'}">${g.up ? 'UP' : 'DN'}</td><td style="color:${g.up ? 'var(--ok)' : 'var(--hi)'}">${g.gap > 0 ? '+' : ''}${fmtNum(g.gap, 1)}</td>
-          <td>${fmtNum(g.pc, 1)}</td><td>${dist > 0 ? '+' : ''}${fmtNum(dist, 1)}</td></tr>`; }).join('')}</table>` : '<small>Brak otwartych luk (min. ' + fmtNum(A.gapMin, 2) + '%)</small>'}
-      ${r.err ? `<div style="color:var(--bad);font-size:12px;margin-top:4px">Część danych: ${esc(r.err)}</div>` : ''}</div>`;
+  let h = `<div class="chips" id="aTabs" style="margin-bottom:12px">${tabs.map(k => `<button class="chip ${A.tab === k ? 'on' : ''}" data-t="${k}" style="font-weight:600">${esc(INSTR[k].n)}</button>`).join('')}
+    <button class="chip ${A.tab === 'cfg' ? 'on' : ''}" data-t="cfg">⚙ Ustawienia</button></div>`;
+  if (A.tab === 'cfg') h += anaSettingsHTML();
+  else {
+    const k = A.tab, I = INSTR[k], sent = sentOf(k);
+    if (sent.includes('euwax')){ const E = C.euwax;
+      h += `<div class="card"><div class="row"><b style="flex:1">EUWAX Sentiment</b>${infoBtn('euwax')}</div>${E ? (() => { const [t, d] = euwaxTxt(E.v);
+        return `<div class="row" style="margin-top:8px;align-items:flex-end;gap:16px"><div style="font-size:40px;font-weight:800;line-height:1;color:${E.v < 0 ? 'var(--hi)' : 'var(--ok)'}">${E.v > 0 ? '+' : ''}${fmtNum(E.v, 1)}</div>
+          <div><b style="color:${E.v < 0 ? 'var(--hi)' : E.v > 10 ? 'var(--ok)' : 'var(--mut)'}">${t}</b><br><small>${d}</small></div></div>${barCenter(E.v)}${spark(E.ser)}
+          <small>Dziś: min ${fmtNum(E.lo, 1)} · max ${fmtNum(E.hi, 1)} · ${when(E.t)} · Börse Stuttgart przez ONVISTA</small>`; })() : '<small>Brak danych</small>'}${err('EUWAX')}</div>`; }
+    if (sent.includes('fg')){ const F = C.fg;
+      h += `<div class="card"><div class="row"><b style="flex:1">CNN Fear & Greed (rynek USA)</b>${infoBtn('fg')}</div>${F ? `
+        <div class="row" style="margin-top:8px;align-items:flex-end;gap:16px"><div style="font-size:40px;font-weight:800;line-height:1;color:${fgColor(F.s)}">${Math.round(F.s)}</div>
+          <div><b style="color:${fgColor(F.s)}">${(FG_PL[F.r] || F.r).toUpperCase()}</b><br><small>0 = skrajny strach · 100 = skrajna chciwość</small></div></div>${barFG(F.s)}
+        <small>Tydzień temu: ${fmtNum(F.w, 0)} · miesiąc: ${fmtNum(F.m, 0)}${F.m3 != null ? ' · 3 mies.: ' + fmtNum(F.m3, 0) : ''}${F.y != null ? ' · rok: ' + fmtNum(F.y, 0) : ''}</small>
+        <table style="width:100%;margin-top:10px;font-size:13px;border-collapse:collapse">${F.comp.map(c => `<tr><td style="padding:3px 0">${esc(c.n)}</td><td style="width:34px;text-align:right;color:${fgColor(c.s)}">${Math.round(c.s)}</td>
+          <td style="width:42%;padding-left:10px"><div style="height:7px;background:#22283a;border-radius:4px"><div style="height:7px;width:${Math.max(2, c.s)}%;background:${fgColor(c.s)};border-radius:4px"></div></div></td>
+          <td style="width:28%;padding-left:8px;color:${fgColor(c.s)};font-size:12px">${FG_PL[c.r] || esc(c.r)}</td></tr>`).join('')}</table>` : '<small>Brak danych</small>'}${err('Fear & Greed')}</div>`; }
+    if (sent.includes('vix')){ const V = C.vix;
+      if (V){ const [vt, vc] = vixTxt(V.v);
+        h += `<div class="card row"><b style="flex:1">VIX</b><span style="font-size:22px;font-weight:700;color:${vc}">${fmtNum(V.v, 2)}</span><span style="color:${vc}">${vt}</span>
+          ${V.prev ? `<small>${V.v >= V.prev ? '+' : ''}${fmtNum(V.v - V.prev, 2)} d/d</small>` : ''}${infoBtn('vix')}</div>`; }
+      else if (errs.VIX) h += `<div class="card"><b>VIX</b>${err('VIX')}</div>`; }
+    const r = (C.inst || {})[k];
+    h += `<div class="day" style="margin-top:16px"><span>${esc(I.d)}</span><span class="wk">${r ? when(r.t) : ''}</span></div>`;
+    if (!r) h += `<div class="card"><small>Brak danych${errs[k] ? ': ' + esc(errs[k]) : ' – odśwież za chwilę'}</small></div>`;
+    else { const [at, ac] = alignTxt(r);
+      h += `<div class="card"><div class="row"><b style="flex:1">Trend SMA ${A.fast}/${A.slow}</b><span>Cena: <b>${fmtNum(r.price, 1)}</b></span>${infoBtn('trend')}</div>
+        ${TFS.map(([tf]) => { const t = r.tf[tf], c = !t ? 'var(--mut)' : t.dir > 0 ? 'var(--ok)' : 'var(--hi)';
+          return `<div class="row" style="margin-top:8px;padding:8px 10px;border:1px solid ${t ? c : 'var(--line)'};border-radius:10px;background:${!t ? 'transparent' : t.dir > 0 ? '#12261c' : '#2a1418'}">
+            <div style="min-width:52px"><b style="font-size:16px">${tf}</b><div style="color:${c};font-weight:800;font-size:18px">${!t ? '–' : t.dir > 0 ? '▲ BULL' : '▼ BEAR'}</div></div>
+            <div style="flex:1;font-size:12px;color:var(--mut);text-align:right">${t ? `SMA ${A.fast}: <span style="color:var(--tx)">${fmtNum(t.f, 1)}</span><br>SMA ${A.slow}: <span style="color:var(--tx)">${fmtNum(t.s, 1)}</span><br>
+              Różnica: <span style="color:${c}">${t.diff > 0 ? '+' : ''}${fmtNum(t.diff, 2)}%</span>` : 'brak danych'}</div>
+            <div style="width:90px;height:6px;background:#22283a;border-radius:3px;position:relative">${t ? `<div style="position:absolute;top:0;bottom:0;${t.diff < 0 ? 'right:50%' : 'left:50%'};width:${Math.min(50, Math.abs(t.diff) * 12)}%;background:${c};border-radius:3px"></div>` : ''}<div style="position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:#fff"></div></div></div>`; }).join('')}
+        <div style="margin-top:10px;padding:8px 10px;border:1px solid ${ac === 'var(--mut)' ? 'var(--line)' : ac};border-radius:8px;color:${ac};font-size:13px;font-weight:600">${at}</div></div>
+        <div class="card"><div class="row"><b style="flex:1">Otwarte luki</b>${infoBtn('gaps')}</div>
+        ${r.gaps.length ? `<table style="width:100%;margin-top:6px;font-size:12px;border-collapse:collapse"><tr style="color:var(--mut)"><td>Data</td><td>Typ</td><td>Luka</td><td>Poprz. zamkn.</td><td>Otwarcie</td><td>Odległość</td></tr>
+          ${r.gaps.slice().reverse().map(g => { const dist = r.price - g.pc; return `<tr><td>${new Date(g.t).toLocaleDateString('pl-PL')}</td>
+            <td style="color:${g.up ? 'var(--ok)' : 'var(--hi)'}">${g.up ? 'UP' : 'DN'}</td><td style="color:${g.up ? 'var(--ok)' : 'var(--hi)'}">${g.gap > 0 ? '+' : ''}${fmtNum(g.gap, 1)}</td>
+            <td>${fmtNum(g.pc, 1)}</td><td>${fmtNum(g.op, 1)}</td><td>${dist > 0 ? '+' : ''}${fmtNum(dist, 1)}</td></tr>`; }).join('')}</table>` : '<small>Brak otwartych luk (min. ' + fmtNum(A.gapMin, 2) + '%)</small>'}
+        ${r.err ? `<div style="color:var(--bad);font-size:12px;margin-top:4px">Część danych: ${esc(r.err)}</div>` : ''}</div>`; }
+    h += `<p style="text-align:center"><small>Dane informacyjne, nie stanowią porady inwestycyjnej.</small></p>`;
   }
-  h += `<div class="card"><b>Ustawienia analizy</b>
-    <label>Instrumenty</label><div class="chips" id="aIn">${Object.entries(INSTR).map(([k, I]) => `<button class="chip ${A.inst.includes(k) ? 'on' : ''}" data-k="${k}">${esc(I.n)}</button>`).join('')}</div>
+  $('#view').innerHTML = h;
+  $('#aTabs').onclick = e => { const b = e.target.closest('[data-t]'); if (!b) return; A.tab = b.dataset.t; save(); render(); window.scrollTo(0, 0); };
+  $('#view').querySelectorAll('[data-info]').forEach(b => b.onclick = ev => { ev.stopPropagation(); sheet(`<h2>Jak czytać</h2><p>${esc(ANA_INFO[b.dataset.info])}</p>`); });
+  if (A.tab === 'cfg') bindAnaSettings();
+}
+
+function anaSettingsHTML(){
+  const A = anaSet();
+  return `<div class="card"><b>Zakładki (instrumenty)</b><div class="chips" id="aIn" style="margin-top:8px">${Object.entries(INSTR).map(([k, I]) => `<button class="chip ${A.inst.includes(k) ? 'on' : ''}" data-k="${k}">${esc(I.n)}</button>`).join('')}</div>
+    <small>Każdy zaznaczony instrument ma osobną zakładkę: DAX z sentymentem EUWAX, indeksy USA z Fear & Greed i VIX.</small>
     <div class="row" style="margin-top:6px"><div><label>SMA szybka</label><input type="number" id="aF" value="${A.fast}" style="width:90px"></div><div><label>SMA wolna</label><input type="number" id="aS" value="${A.slow}" style="width:90px"></div>
       <div><label>Min. luka %</label><input type="number" step="0.05" id="aG" value="${A.gapMin}" style="width:90px"></div><div><label>Odświeżaj co (min)</label><input type="number" id="aE" value="${A.every}" min="1" style="width:90px"></div></div>
     <div class="row" style="margin-top:10px"><button class="chip ${A.alertAlign ? 'on' : ''}" id="aAl">Powiadom, gdy wszystkie interwały zgodne</button>
       <label style="margin:0">Powiadom, gdy EUWAX przekroczy ±</label><input type="number" id="aEu" value="${A.euwaxAlert || ''}" placeholder="np. 50" style="width:80px"></div>
-    <small>Ceny: Yahoo Finance (opóźnienie do kilkunastu minut, DAX = indeks kasowy). EUWAX: Börse Stuttgart przez ONVISTA. Fear & Greed: CNN. Źródła nieoficjalne, mogą się zmienić.</small></div>
-    <p style="text-align:center"><small>Dane informacyjne, nie stanowią porady inwestycyjnej.</small></p>`;
-  $('#view').innerHTML = h;
-  $('#view').querySelectorAll('[data-info]').forEach(b => b.onclick = ev => { ev.stopPropagation(); sheet(`<h2>Jak czytać</h2><p>${esc(ANA_INFO[b.dataset.info])}</p>`); });
+    <small>Ceny: Yahoo Finance (opóźnienie do kilkunastu minut, DAX = indeks kasowy). EUWAX: Börse Stuttgart przez ONVISTA. Fear & Greed: CNN. Źródła nieoficjalne, mogą się zmienić.</small></div>`;
+}
+function bindAnaSettings(){
+  const A = anaSet();
   $('#aIn').onclick = e => { const b = e.target.closest('[data-k]'); if (!b) return; const k = b.dataset.k, i = A.inst.indexOf(k);
     i >= 0 ? A.inst.splice(i, 1) : A.inst.push(k); save(); render(); if (i < 0) syncAna(true); };
   const num = (id, key, mn) => $(id).onchange = e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v >= mn){ A[key] = v; save(); syncAna(true); } };
@@ -1355,24 +1379,30 @@ function vAnaly(){
   $('#aEu').onchange = e => { A.euwaxAlert = Math.max(0, Math.min(100, +e.target.value || 0)); save(); };
 }
 
-// Kompaktowa wersja do widgetu
+// Kompaktowa wersja do widgetu: te same zakładki, wybór zapamiętany osobno (widget nie zapisuje stanu aplikacji)
+const WTAB_KEY = 'wg-widget-tab';
 function anaCompactHTML(){
-  const A = anaSet(), C = anaCache(), E = C.euwax, F = C.fg, V = C.vix;
-  let h = '<div class="wd">Sentyment</div><div style="padding:2px 12px 6px">';
-  if (E){ const [t] = euwaxTxt(E.v); h += `<div class="row" style="gap:6px"><span style="min-width:62px">EUWAX</span><b style="color:${E.v < 0 ? 'var(--hi)' : 'var(--ok)'}">${E.v > 0 ? '+' : ''}${fmtNum(E.v, 1)}</b><small>${t.toLowerCase()}</small></div>${barCenter(E.v).split('<div class="row"')[0]}`; }
-  if (F) h += `<div class="row" style="gap:6px;margin-top:4px"><span style="min-width:62px">F&G (US)</span><b style="color:${fgColor(F.s)}">${Math.round(F.s)}</b><small>${(FG_PL[F.r] || F.r).toLowerCase()}</small></div>${barFG(F.s).split('<div class="row"')[0]}`;
-  if (V){ const [vt, vc] = vixTxt(V.v); h += `<div class="row" style="gap:6px;margin-top:4px"><span style="min-width:62px">VIX</span><b style="color:${vc}">${fmtNum(V.v, 2)}</b><small>${vt}</small></div>`; }
-  h += `</div><div class="wd">Trend SMA ${A.fast}/${A.slow}</div><table style="width:100%;font-size:12px;border-collapse:collapse;text-align:center;margin:0 0 4px">
-    <tr style="color:var(--mut);font-size:10px"><td style="text-align:left;padding-left:12px"></td>${TFS.map(([tf]) => `<td>${tf}</td>`).join('')}</tr>`;
-  for (const k of A.inst){ const r = (C.inst || {})[k]; if (!r || !INSTR[k]) continue;
-    const al = r.align; h += `<tr><td style="text-align:left;padding:2px 0 2px 12px;font-weight:600;color:${al > 0 ? 'var(--ok)' : al < 0 ? 'var(--hi)' : 'var(--tx)'}">${esc(INSTR[k].n)}</td>${TFS.map(([tf]) => tfCell(r.tf[tf], true)).join('')}</tr>`; }
-  h += '</table><div class="wd">Najbliższe otwarte luki</div><div style="padding:0 12px 8px;font-size:12px">';
-  let any = false;
-  for (const k of A.inst){ const r = (C.inst || {})[k]; if (!r || !r.gaps || !r.gaps.length) continue;
-    const g = r.gaps.slice().sort((a, b) => Math.abs(r.price - a.pc) - Math.abs(r.price - b.pc))[0], dist = r.price - g.pc; any = true;
-    h += `<div class="row" style="gap:6px"><b style="min-width:46px">${esc(INSTR[k].n)}</b><span style="color:${g.up ? 'var(--ok)' : 'var(--hi)'}">${g.up ? 'UP' : 'DN'}</span><span>${fmtNum(g.pc, 1)}</span><small>(${dist > 0 ? '+' : ''}${fmtNum(dist, 1)})</small><small>${r.gaps.length > 1 ? '+' + (r.gaps.length - 1) : ''}</small></div>`; }
-  if (!any) h += '<small>Brak otwartych luk</small>';
-  return h + `</div><div style="padding:0 12px 8px"><small>${C.t ? 'Analiza: ' + when(C.t) : 'Analiza: brak danych'}</small></div>`;
+  const A = anaSet(), C = anaCache(), tabs = anaTabs();
+  let k = ''; try{ k = localStorage.getItem(WTAB_KEY) || ''; }catch(_){}
+  if (!tabs.includes(k)) k = tabs[0]; if (!k) return '<div class="wd">Brak instrumentów</div>';
+  let h = `<div class="wt">${tabs.map(t => `<button data-wt="${t}" class="${t === k ? 'on' : ''}">${esc(INSTR[t].n)}</button>`).join('')}</div><div style="padding:6px 12px">`;
+  const sent = sentOf(k), E = C.euwax, F = C.fg, V = C.vix;
+  if (sent.includes('euwax') && E){ const [t] = euwaxTxt(E.v); h += `<div class="row" style="gap:6px"><span style="min-width:62px">EUWAX</span><b style="color:${E.v < 0 ? 'var(--hi)' : 'var(--ok)'}">${E.v > 0 ? '+' : ''}${fmtNum(E.v, 1)}</b><small>${t.toLowerCase()}</small></div>${barCenter(E.v).split('<div class="row"')[0]}`; }
+  if (sent.includes('fg') && F) h += `<div class="row" style="gap:6px;margin-top:4px"><span style="min-width:62px">Fear&Greed</span><b style="color:${fgColor(F.s)}">${Math.round(F.s)}</b><small>${(FG_PL[F.r] || F.r).toLowerCase()}</small></div>${barFG(F.s).split('<div class="row"')[0]}`;
+  if (sent.includes('vix') && V){ const [vt, vc] = vixTxt(V.v); h += `<div class="row" style="gap:6px;margin-top:4px"><span style="min-width:62px">VIX</span><b style="color:${vc}">${fmtNum(V.v, 2)}</b><small>${vt}</small></div>`; }
+  const r = (C.inst || {})[k];
+  if (!r) return h + '<small>Brak danych</small></div>';
+  const [at, ac] = alignTxt(r);
+  h += `</div><div class="wd">Trend SMA ${A.fast}/${A.slow} · cena ${fmtNum(r.price, 1)}</div>`;
+  for (const [tf] of TFS){ const t = r.tf[tf], c = !t ? 'var(--mut)' : t.dir > 0 ? 'var(--ok)' : 'var(--hi)';
+    h += `<div class="row" style="padding:2px 12px;gap:8px;font-size:12px"><b style="min-width:32px">${tf}</b><b style="color:${c};min-width:58px">${!t ? '–' : t.dir > 0 ? '▲ BULL' : '▼ BEAR'}</b>
+      <span style="color:${c}">${t ? (t.diff > 0 ? '+' : '') + fmtNum(t.diff, 2) + '%' : ''}</span></div>`; }
+  h += `<div style="margin:6px 12px;padding:5px 8px;border:1px solid ${ac === 'var(--mut)' ? 'var(--line)' : ac};border-radius:7px;color:${ac};font-size:11px">${at}</div>`;
+  h += '<div class="wd">Otwarte luki</div><div style="padding:0 12px 6px;font-size:12px">';
+  if (r.gaps.length) for (const g of r.gaps.slice().sort((a, b) => Math.abs(r.price - a.pc) - Math.abs(r.price - b.pc)).slice(0, 4)){ const dist = r.price - g.pc;
+    h += `<div class="row" style="gap:6px"><span style="min-width:44px">${new Date(g.t).toLocaleDateString('pl-PL', {day:'2-digit', month:'2-digit'})}</span><span style="color:${g.up ? 'var(--ok)' : 'var(--hi)'};min-width:24px">${g.up ? 'UP' : 'DN'}</span><span>${fmtNum(g.pc, 1)}</span><small>(${dist > 0 ? '+' : ''}${fmtNum(dist, 1)})</small></div>`; }
+  else h += '<small>Brak otwartych luk</small>';
+  return h + `</div><div style="padding:0 12px 8px"><small>${C.t ? 'Analiza: ' + when(C.t) : ''}</small></div>`;
 }
 
 /* ---------- Windows: mini-widget na pulpicie i podpowiedź ikony w zasobniku ---------- */
@@ -1420,6 +1450,7 @@ function startWidget(){
     W.innerHTML = html;
     W.querySelectorAll('[data-rz]').forEach(g => g.onmousedown = e => { if (e.button === 0 && window.wgResize){ e.preventDefault(); window.wgResize(HT[g.dataset.rz]); } });
     $('#wgP').onclick = () => { pinMenu = !pinMenu; draw(); };
+    W.querySelectorAll('[data-wt]').forEach(b => b.onclick = ev => { ev.stopPropagation(); try{ localStorage.setItem(WTAB_KEY, b.dataset.wt); }catch(_){} draw(); });
     $('#wgE').onclick = () => { expanded = !expanded; draw(); fetch('/api/widget', {method:'POST', body:JSON.stringify({expanded})}).catch(() => {}); };
     W.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { corner = b.dataset.c; pinMenu = false;
       fetch('/api/widget', {method:'POST', body:JSON.stringify({corner})}).catch(() => {}); draw(); });
