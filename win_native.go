@@ -109,8 +109,20 @@ func runPS(script string) (string, error) {
 	}
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-EncodedCommand", base64.StdEncoding.EncodeToString(b))
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000} // CREATE_NO_WINDOW
-	out, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(out)), err
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output() // tylko stdout: na stderr PowerShell wypisuje postęp w formacie CLIXML
+	if err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if i := strings.Index(msg, "#< CLIXML"); i >= 0 || strings.HasPrefix(msg, "<Objs") {
+			msg = "" // sam szum CLIXML, bez treści błędu
+		}
+		if msg == "" {
+			msg = err.Error()
+		}
+		return strings.TrimSpace(string(out)), fmt.Errorf("%s", msg)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // Powiadomienie Windows (toast) przez PowerShell — bez dodatkowych bibliotek.
@@ -121,6 +133,7 @@ func toast(title, body string) (string, error) {
 		`<audio src="ms-winsoundevent:Notification.Reminder"/></toast>`
 	try := func(id string) (string, error) {
 		script := `$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
 $x = New-Object Windows.Data.Xml.Dom.XmlDocument
@@ -128,16 +141,19 @@ $x.LoadXml('` + strings.ReplaceAll(xml, "'", "''") + `')
 $t = [Windows.UI.Notifications.ToastNotification]::new($x)
 $n = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('` + id + `')
 $n.Show($t)
-Write-Output $n.Setting`
+Write-Output ("SETTING=" + $n.Setting)`
 		out, err := runPS(script)
 		if err != nil {
-			if out == "" {
-				out = err.Error()
-			}
-			return "", fmt.Errorf("%s", out)
+			return "", err
 		}
-		lines := strings.Split(out, "\n")
-		return strings.TrimSpace(lines[len(lines)-1]), nil
+		if i := strings.LastIndex(out, "SETTING="); i >= 0 {
+			v := strings.TrimSpace(out[i+len("SETTING="):])
+			if j := strings.IndexAny(v, "\r\n"); j >= 0 {
+				v = v[:j]
+			}
+			return v, nil
+		}
+		return "Enabled", nil // pokazano bez błędu, stanu nie odczytano
 	}
 	st, err := try(appID)
 	if err != nil || st != "Enabled" {

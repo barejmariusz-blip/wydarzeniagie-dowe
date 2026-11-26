@@ -211,7 +211,11 @@ const Native = {
       fetch('/api/test', {method:'POST', body:JSON.stringify({title:t, body:b})}).then(r => r.json()).then(j => {
         const msg = j.error ? 'Błąd powiadomienia Windows: ' + j.error
           : j.setting === 'Enabled' ? 'Wysłane. Jeśli go nie widzisz: wyłącz tryb „Nie przeszkadzać” albo sprawdź Ustawienia → System → Powiadomienia.'
-          : 'Windows blokuje powiadomienia tej aplikacji (' + j.setting + '). Włącz je w Ustawienia → System → Powiadomienia → Wydarzenia Giełdowe.';
+          : ({DisabledForApplication:'Windows ma wyłączone powiadomienia tej aplikacji. Włącz je w Ustawienia → System → Powiadomienia → Wydarzenia Giełdowe.',
+              DisabledForUser:'W Windows wyłączone są wszystkie powiadomienia. Włącz je w Ustawienia → System → Powiadomienia.',
+              DisabledByGroupPolicy:'Powiadomienia blokuje zasada grupy (komputer firmowy).',
+              DisabledByManifest:'Windows nie pozwala tej aplikacji wysyłać powiadomień.'}[j.setting] || 'Nieznany stan powiadomień: ' + j.setting) +
+            ' Przypomnienia i tak pokaże widget na pulpicie.';
         sheet(`<h2>Test powiadomienia</h2><p>${esc(msg)}</p><div class="row"><button class="btn" onclick="Native.openUrl('ms-settings:notifications')">Otwórz ustawienia powiadomień</button></div>`);
       }).catch(e => toast('Błąd: ' + e)); }
     else toast('Powiadomienia działają w apce');
