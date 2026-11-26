@@ -63,6 +63,23 @@ input[type=time]{width:auto}
 .next{display:flex;gap:12px;align-items:center}
 .next .cd{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--acc)}
 small{color:var(--mut)}
+body.widget{background:#0d1017;overflow:hidden;user-select:none;font-size:13px}
+body.widget header,body.widget nav,body.widget main{display:none}
+#wg{display:none}body.widget #wg{display:block;height:100vh;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+#wg .wh{display:flex;align-items:center;gap:6px;padding:7px 8px 7px 12px;background:#141925;cursor:move;border-bottom:1px solid var(--line)}
+#wg .wh b{flex:1;font-size:12px;color:var(--mut);letter-spacing:.04em;text-transform:uppercase}
+#wg .wh button{background:none;border:0;color:var(--mut);font-size:15px;cursor:pointer;padding:0 4px}
+#wg .wn{padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer}
+#wg .wn .cd{font-size:26px;font-weight:700;color:var(--acc);font-variant-numeric:tabular-nums;line-height:1.1}
+#wg .wl{overflow:auto;max-height:calc(100vh - 150px)}
+#wg .wi{display:flex;gap:8px;padding:6px 12px;align-items:flex-start;cursor:pointer}
+#wg .wi:hover{background:#151a26}
+#wg .wi .bar{width:3px;align-self:stretch;border-radius:3px}
+#wg .wi .tm{min-width:40px;font-weight:600;font-variant-numeric:tabular-nums}
+#wg .wi .tm small{display:block;font-weight:400;font-size:10px}
+#wg .wd{padding:6px 12px 2px;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+#wg .wa{background:#3a1118;border-bottom:1px solid #6b2230;padding:10px 12px}
+#wg .wa b{color:#ffb3bb}
 .src .st{font-size:12px;color:var(--mut);margin-top:4px}
 .src .st .e{color:var(--bad)}
 </style>
@@ -82,6 +99,7 @@ small{color:var(--mut)}
 <div class="sheet-bg" id="sheetBg"></div>
 <div class="sheet" id="sheet"></div>
 <div class="toast" id="toast"></div>
+<div id="wg"></div>
 
 <script>
 'use strict';
@@ -156,6 +174,7 @@ const hash = s => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + 
 const IS_ANDROID = !!(window.Android && Android.http);
 const IS_WIN = !IS_ANDROID && /^(127\.0\.0\.1|localhost)$/.test(location.hostname);
 const BG = IS_ANDROID && location.hash === '#bg';
+const WIDGET = IS_WIN && /[?&]widget=1/.test(location.search);
 const pend = {}; let reqN = 1;
 window.onHttp = (id, status, body) => { const p = pend[id]; if (!p) return; delete pend[id]; p({status, body}); };
 const Native = {
@@ -775,8 +794,9 @@ function vSettings(){
   const impSel = (id, cur) => `<select id="${id}" style="width:auto">${['low','med','high'].map(k => `<option value="${k}" ${cur === k ? 'selected' : ''}>${IMP_N[k]} i wyżej</option>`).join('')}</select>`;
   $('#view').innerHTML = `
   ${st !== 'granted' ? `<div class="card warn">Powiadomienia są wyłączone, przypomnienia nie dotrą.<br><br><button class="btn sm" id="askN">Włącz powiadomienia</button></div>` : ''}
-  ${IS_WIN ? `<div class="card warn" style="background:#141c2a;border-color:#233453;color:#bcd3f5">Na Windows przypomnienia działają, gdy program jest uruchomiony (może być zminimalizowany).
-    <div class="row" style="margin-top:8px"><button class="chip" id="auto">Uruchamiaj z Windows: …</button></div></div>` : ''}
+  ${IS_WIN ? `<div class="card warn" style="background:#141c2a;border-color:#233453;color:#bcd3f5">Na Windows przypomnienia działają, gdy program jest uruchomiony: także schowany do zasobnika przy zegarze.
+    <div class="row" style="margin-top:8px"><button class="chip" id="auto">Uruchamiaj z Windows: …</button><button class="chip" id="wdg">Widget na pulpicie: …</button></div>
+    <small>Zamknięcie okna (X) chowa program do zasobnika przy zegarze, gdzie dalej działa. „Zakończ” jest w menu pod prawym przyciskiem na ikonie.</small></div>` : ''}
   <div class="card"><b>Przypomnienia o danych z godziną</b>
     <label><i class="imp" style="background:var(--hi)"></i>Wysoki wpływ</label>${remRow('rH', R.high)}
     <label><i class="imp" style="background:var(--md)"></i>Średni wpływ</label>${remRow('rM', R.med)}
@@ -825,6 +845,9 @@ function vSettings(){
   $('#xIcs').onclick = async () => toast(await Native.saveFile('wydarzenia-gieldowe.ics', makeICS(visible().filter(e => e.end > Date.now())), 'text/calendar'));
   $('#gls').onclick = openGlossary;
   $('#tst').onclick = () => Native.test('⏰ 14:30 USD CPI m/m', 'Za 5 min · Prognoza: 0.3% · Poprzednio: 0.2%');
+  if ($('#wdg')) fetch('/api/widget').then(r => r.json()).then(j => { const b = $('#wdg'); if (!b) return;
+    b.textContent = 'Widget na pulpicie: ' + (j.on ? 'tak' : 'nie'); b.classList.toggle('on', !!j.on);
+    b.onclick = () => fetch('/api/widget', {method:'POST', body:JSON.stringify({on:!j.on})}).then(() => render()); }).catch(() => {});
   if ($('#auto')) fetch('/api/autostart').then(r => r.json()).then(j => { const b = $('#auto'); if (!b) return;
     b.textContent = 'Uruchamiaj z Windows: ' + (j.on ? 'tak' : 'nie'); b.classList.toggle('on', !!j.on);
     b.onclick = () => fetch('/api/autostart', {method:'POST', body:JSON.stringify({on:!j.on})}).then(() => render()); }).catch(() => {});
@@ -1080,18 +1103,68 @@ $('#view').onclick = e => {
 };
 $('#syncBtn').onclick = () => syncAll(true);
 $('#hiBtn').onclick = () => { S.set.onlyHigh = !S.set.onlyHigh; save(); reschedule(); render(); toast(S.set.onlyHigh ? 'Tylko wysoki wpływ' : 'Wszystkie wg filtrów'); };
+/* ---------- Windows: mini-widget na pulpicie i podpowiedź ikony w zasobniku ---------- */
+function nextHigh(){ const now = Date.now(); return visible().find(e => !e.allDay && e.start > now && IMP[e.impact] >= 3); }
+function trayTip(){
+  const n = nextHigh();
+  const t = n ? `Wydarzenia Giełdowe\n${hm(n.start)} ${n.ccy ? n.ccy + ' ' : ''}${n.title}\nza ${countdown(n.start - Date.now())}` : 'Wydarzenia Giełdowe';
+  fetch('/api/tray-tip', {method:'POST', body:t.slice(0, 120)}).catch(() => {});
+}
+function startWidget(){
+  document.body.classList.add('widget');
+  const W = $('#wg');
+  const post = u => fetch(u, {method:'POST'}).catch(() => {});
+  let alert = null;
+  const draw = () => {
+    try{ S = migrate(load()); }catch(_){}
+    const now = Date.now(), ev = visible(), n = nextHigh();
+    const endTmr = new Date(); endTmr.setHours(0,0,0,0); endTmr.setDate(endTmr.getDate() + 2);
+    const list = ev.filter(e => !e.allDay && e.end > now - 15*MIN && e.start < endTmr.getTime() && IMP[e.impact] >= 2).slice(0, 14);
+    const allday = ev.filter(e => e.allDay && e.start <= now && e.end > now && IMP[e.impact] >= 2);
+    let html = `<div class="wh" id="wgH"><b>Wydarzenia giełdowe</b><button id="wgO" title="Otwórz program">⤢</button><button id="wgX" title="Ukryj widget (włączysz w menu ikony przy zegarze)">×</button></div>`;
+    if (alert) html += `<div class="wa"><b>${esc(alert.title)}</b><div style="margin:4px 0 8px;white-space:pre-wrap">${esc(alert.body)}</div><button class="btn sm acc" id="wgA">OK</button></div>`;
+    if (n){ const st = srcTime(n);
+      html += `<div class="wn" data-o="1"><small>Najbliższe ważne · ${hm(n.start)}${st ? ' (' + st.hm + ' ' + esc(st.short) + ')' : ''}</small>
+        <div class="cd">${countdown(n.start - now)}</div><div>${n.ccy ? `<span class="ccy">${esc(n.ccy)}</span>` : ''}${esc(n.title)}</div></div>`; }
+    html += '<div class="wl">';
+    for (const e of allday) html += `<div class="wi" data-o="1"><div class="bar" style="background:${IMP_C[e.impact]}"></div><div class="tm">dziś</div><div>${esc(e.title)}</div></div>`;
+    let last = null;
+    for (const e of list){
+      const k = dayKey(e.start);
+      if (k !== last){ html += `<div class="wd">${k === dayKey(now) ? 'Dziś' : 'Jutro'}</div>`; last = k; }
+      const st = srcTime(e);
+      html += `<div class="wi" data-o="1" style="${e.end < now ? 'opacity:.4' : ''}"><div class="bar" style="background:${IMP_C[e.impact]}"></div>
+        <div class="tm">${hm(e.start)}${st ? `<small>${st.hm} ${esc(st.short)}</small>` : ''}</div><div>${e.ccy ? `<span class="ccy">${esc(e.ccy)}</span>` : ''}${esc(e.title)}</div></div>`;
+    }
+    if (!list.length && !allday.length) html += '<div class="wd" style="text-transform:none">Dziś i jutro brak ważnych wydarzeń</div>';
+    W.innerHTML = html + '</div>';
+    $('#wgH').onmousedown = e => { if (e.button === 0 && !e.target.closest('button') && window.wgDrag) window.wgDrag(); };
+    $('#wgO').onclick = () => post('/api/show-main');
+    $('#wgX').onclick = () => post('/api/widget-hide');
+    if ($('#wgA')) $('#wgA').onclick = () => { alert = null; post('/api/widget-ack'); draw(); };
+    W.querySelectorAll('[data-o]').forEach(x => x.onclick = () => post('/api/show-main'));
+  };
+  const poll = () => fetch('/api/widget-alert').then(r => r.json()).then(j => {
+    const a = j.alert || null;
+    if (JSON.stringify(a) !== JSON.stringify(alert)){ alert = a; draw(); }
+  }).catch(() => {});
+  draw(); setInterval(draw, 20000); setInterval(poll, 3000);
+}
+
 // Synchronizacja automatyczna: co S.set.syncEvery minut (0 = tylko przy otwarciu i ręcznie).
 // Android: dodatkowo zadanie w tle (JobScheduler) działa przy zamkniętej apce. Windows: gdy program jest uruchomiony (także zminimalizowany).
 const stale = () => Date.now() - S.set.lastSync > (S.set.syncEvery ? S.set.syncEvery * MIN : HOUR);
 window.onNativeResume = () => { if (stale()) syncAll(false, true); else render(); };
-setInterval(() => { if (S.set.syncEvery && stale()) syncAll(false, true); else if (tab === 'up' && $('#sheet').style.display !== 'block') render(); }, 60000);
+if (!WIDGET) setInterval(() => { if (S.set.syncEvery && stale()) syncAll(false, true); else if (tab === 'up' && $('#sheet').style.display !== 'block') render(); }, 60000);
 
 // Windows: przypomnienia pokazywane też w oknie programu (gdyby toast systemowy był wyłączony)
-if (IS_WIN) setInterval(() => fetch('/api/fired').then(r => r.json()).then(list => {
+if (IS_WIN && !WIDGET) setInterval(() => fetch('/api/fired').then(r => r.json()).then(list => {
   for (const a of list) sheet(`<h2>${esc(a.title)}</h2><p style="white-space:pre-wrap">${esc(a.body)}</p><div class="row"><button class="btn acc" onclick="closeSheet()">OK</button></div>`);
 }).catch(() => {}), 15000);
 
-if (BG){
+if (WIDGET){
+  startWidget();
+} else if (BG){
   // Uruchomione przez zadanie w tle na Androidzie: synchronizacja, przeplanowanie przypomnień, koniec.
   syncAll(false, true).catch(() => {}).then(() => { try{ Android.bgDone(); }catch(_){} });
 } else {
@@ -1100,6 +1173,7 @@ if (BG){
   Native.setBgSync(S.set.syncEvery);
   if (Native.notifyState() === 'ask') Native.askNotify();
   syncAll(false, stale());
+  if (IS_WIN){ trayTip(); setInterval(trayTip, 60000); }
 }
 </script>
 </body>

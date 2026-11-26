@@ -8,7 +8,7 @@ Rynki (każdy włączany osobno w Filtrach): Niemcy / strefa euro (DAX, Euro Sto
 
 ## Pobieranie
 
-- **Windows:** Releases → `windows` → `WydarzeniaGieldowe.exe`
+- **Windows:** Releases → `windows` → `WydarzeniaGieldowe-Setup.exe` (instalator: menu Start, start z Windows, odinstalowanie) albo `WydarzeniaGieldowe.exe` (wersja przenośna)
 - **Android:** Releases → `android` → `wydarzenia-gieldowe.apk`, podpisany tym samym kluczem co Dziennik FBW i Kalendarz Wydarzeń
 
 Obie wersje budują się automatycznie po każdym pushu na `main`.
@@ -51,7 +51,8 @@ W Ustawieniach jest też słownik pojęć. Wagi spółek są orientacyjne (`WEIG
 - Godziny są pokazywane w czasie lokalnym telefonu lub komputera. Obok widać czas oryginalny publikacji (np. `14:30` i pod spodem `08:30 NY`), gdy różni się od lokalnego.
 - Synchronizacja automatyczna co 15 min, 30 min, 1, 2, 4, 6, 12 lub 24 godziny albo wyłączona (Ustawienia). Na Androidzie działa w tle przy zamkniętej aplikacji (JobScheduler uruchamia ten sam kod UI bez okna, `SyncJob.java`). Na Windows działa, gdy program jest uruchomiony.
 - **Android:** przypomnienia przez AlarmManager, przetrwają restart telefonu. Planowanych jest 150 najbliższych i odświeżają się przy każdym otwarciu apki.
-- **Windows:** powiadomienia systemowe działają, gdy program jest uruchomiony (może być zminimalizowany). W Ustawieniach można włączyć „Uruchamiaj z Windows”: program startuje wtedy zminimalizowany.
+- **Windows:** program działa w tle z ikoną przy zegarze. Zamknięcie okna (X) tylko je chowa, a „Zakończ” jest w menu pod prawym przyciskiem na ikonie. Po najechaniu na ikonę widać najbliższe ważne wydarzenie. Przy „Uruchamiaj z Windows” program startuje od razu w zasobniku.
+- **Widget na pulpicie (Windows):** małe okienko z odliczaniem do najbliższego ważnego wydarzenia i listą na dziś i jutro. Leży pod oknami, więc nie zasłania wykresów. Przy przypomnieniu wychodzi na wierzch bez zabierania fokusu (OK chowa go z powrotem, samo po 3 minutach). Przesuwa się za pasek tytułu, a pozycja jest zapamiętywana. Włączanie: menu ikony przy zegarze albo Ustawienia.
 
 ## Architektura
 

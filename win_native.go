@@ -6,9 +6,9 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"fmt"
-	"path/filepath"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -57,6 +57,7 @@ func alarmLoop() {
 		}
 		amu.Unlock()
 		for _, a := range due {
+			raiseWidget(a)
 			toast(a.Title, a.Body)
 			notifyUI(a)
 		}

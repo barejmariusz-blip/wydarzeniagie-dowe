@@ -107,6 +107,27 @@ func serve(ln net.Listener) {
 	mux.HandleFunc("/api/fired", func(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, takeFired())
 	})
+	// Widget i zasobnik
+	mux.HandleFunc("/api/widget", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var req struct{ On bool }
+			json.NewDecoder(r.Body).Decode(&req)
+			setWidget(req.On)
+		}
+		jsonOut(w, map[string]bool{"on": widgetEnabled()})
+	})
+	mux.HandleFunc("/api/widget-alert", func(w http.ResponseWriter, r *http.Request) { jsonOut(w, map[string]any{"alert": currentAlert()}) })
+	mux.HandleFunc("/api/widget-ack", func(w http.ResponseWriter, r *http.Request) { ackAlert(); jsonOut(w, map[string]bool{"ok": true}) })
+	mux.HandleFunc("/api/widget-hide", func(w http.ResponseWriter, r *http.Request) {
+		setWidget(false)
+		jsonOut(w, map[string]bool{"ok": true})
+	})
+	mux.HandleFunc("/api/show-main", func(w http.ResponseWriter, r *http.Request) { showMain(); jsonOut(w, map[string]bool{"ok": true}) })
+	mux.HandleFunc("/api/tray-tip", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(io.LimitReader(r.Body, 1024))
+		setTrayTip(string(b))
+		jsonOut(w, map[string]bool{"ok": true})
+	})
 	mux.HandleFunc("/api/test", func(w http.ResponseWriter, r *http.Request) {
 		var a alarm
 		json.NewDecoder(r.Body).Decode(&a)
@@ -189,6 +210,7 @@ func main() {
 		}
 	}
 	registerAppID()
+	loadConfig()
 	go serve(ln)
 	go alarmLoop()
 
@@ -215,9 +237,10 @@ func main() {
 		return
 	}
 	defer w.Destroy()
-	if len(os.Args) > 1 && os.Args[1] == "--min" {
-		minimize(uintptr(w.Window()))
-	}
-	w.Navigate(fmt.Sprintf("http://%s/", ln.Addr().String()))
+	url := fmt.Sprintf("http://%s/", ln.Addr().String())
+	// --min (autostart): start od razu w zasobniku, bez okna
+	setupShell(w, url, len(os.Args) > 1 && os.Args[1] == "--min")
+	w.Navigate(url)
 	w.Run()
+	removeTray()
 }
