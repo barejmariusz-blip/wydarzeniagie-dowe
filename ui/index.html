@@ -1247,8 +1247,17 @@ let anaBusy = false;
 async function syncAna(force){
   const A = anaSet(), C = anaCache();
   if (!A.on || anaBusy || BG || WIDGET) return;
-  if (!force && Date.now() - C.t < A.every*MIN) return;
-  anaBusy = true; C.t = Date.now(); const errs = {};
+  if (!force && Date.now() - C.t < A.every*MIN){
+    // EUWAX zmienia się co minutę: odświeżany osobno, co minutę, w godzinach notowań (8:05–20:00)
+    const hr = new Date().getHours();
+    if (A.inst.includes('DAX') && hr >= 8 && hr < 21 && Date.now() - (C.euwaxT || 0) >= 55000){
+      C.euwaxT = Date.now();
+      try{ await syncEuwax(); delete (C.errs || {}).EUWAX; }catch(e){ (C.errs = C.errs || {}).EUWAX = String(e.message || e); }
+      save(); if (tab === 'ana') render();
+    }
+    return;
+  }
+  anaBusy = true; C.t = Date.now(); C.euwaxT = Date.now(); const errs = {};
   const job = async (name, fn) => { try{ await fn(); }catch(e){ errs[name] = String(e.message || e); } };
   await Promise.all([job('EUWAX', syncEuwax), job('Fear & Greed', syncFG), job('VIX', syncVIX)]);
   for (const k of A.inst) await job(k, () => syncInstrument(k));
@@ -1265,7 +1274,7 @@ const euwaxTxt = v => v <= -50 ? ['MOCNO BEARISH', 'Prywatni gracze mocno grają
   v <= 10 ? ['NEUTRALNIE', 'Brak wyraźnej przewagi'] : v < 50 ? ['BULLISH', 'Prywatni gracze nastawieni na wzrosty'] : ['MOCNO BULLISH', 'Prywatni gracze mocno grają na wzrosty'];
 const vixTxt = v => v < 15 ? ['spokój', 'var(--ok)'] : v < 20 ? ['normalnie', '#8a93a8'] : v < 30 ? ['nerwowo', 'var(--md)'] : ['panika', 'var(--hi)'];
 const ANA_INFO = {
-  euwax:'Euwax Sentiment (Börse Stuttgart) liczy co minutę z zleceń prywatnych inwestorów na produkty lewarowane na DAX (8:05–20:00): +100 = sami kupujący calle (gra na wzrosty), −100 = sami put. Traktowany kontrariańsko: skrajny pesymizm drobnych graczy często pojawia się przy dołkach, skrajny optymizm przy szczytach. Najlepiej jako potwierdzenie albo ostrzeżenie, nie samodzielny sygnał.',
+  euwax:'Euwax Sentiment (Börse Stuttgart) liczy co minutę z zleceń prywatnych inwestorów na produkty lewarowane na DAX (8:05–20:00): +100 = sami kupujący calle (gra na wzrosty), −100 = sami put. Traktowany kontrariańsko: skrajny pesymizm drobnych graczy często pojawia się przy dołkach, skrajny optymizm przy szczytach. Najlepiej jako potwierdzenie albo ostrzeżenie, nie samodzielny sygnał. Wartość liczona jest z zleceń z ostatnich 60 sekund, więc potrafi skakać o kilkanaście punktów z minuty na minutę: porównując ze stroną Börse Stuttgart, patrz na godzinę odczytu.',
   fg:'CNN Fear & Greed (0–100) łączy 7 wskaźników rynku USA: momentum S&P 500, siłę i szerokość rynku, opcje put/call, VIX, popyt na obligacje śmieciowe i bezpieczne aktywa. Poniżej 25 skrajny strach, powyżej 75 skrajna chciwość. Też czytany kontrariańsko i z opóźnieniem: liczony na danych dziennych.',
   vix:'VIX: oczekiwana zmienność S&P 500 na 30 dni z cen opcji. Poniżej 15 spokój, 15–20 normalnie, 20–30 nerwowo, powyżej 30 panika. Wysoki VIX = większe świece i szersze stopy także na DAX.',
   trend:'Trend SMA: szybka średnia (domyślnie 33) powyżej wolnej (144) = BULL, poniżej = BEAR, na każdym interwale osobno. „Różnica” to odległość szybkiej od wolnej w % (im większa, tym silniejszy trend). Zgodność wszystkich interwałów = silny sygnał, mieszane = rynek w korekcie lub konsolidacji. H4 liczone z godzinowych świec. DAX to indeks kasowy (Yahoo nie ma FDAX): poza sesją Xetra M5/M15 stoją, a ceny różnią się od FDAX o premię kontraktu.',
@@ -1319,7 +1328,7 @@ function vAnaly(){
       h += `<div class="card"><div class="row"><b style="flex:1">EUWAX Sentiment</b>${infoBtn('euwax')}</div>${E ? (() => { const [t, d] = euwaxTxt(E.v);
         return `<div class="row" style="margin-top:8px;align-items:flex-end;gap:16px"><div style="font-size:40px;font-weight:800;line-height:1;color:${E.v < 0 ? 'var(--hi)' : 'var(--ok)'}">${E.v > 0 ? '+' : ''}${fmtNum(E.v, 1)}</div>
           <div><b style="color:${E.v < 0 ? 'var(--hi)' : E.v > 10 ? 'var(--ok)' : 'var(--mut)'}">${t}</b><br><small>${d}</small></div></div>${barCenter(E.v)}${spark(E.ser)}
-          <small>Dziś: min ${fmtNum(E.lo, 1)} · max ${fmtNum(E.hi, 1)} · ${when(E.t)} · Börse Stuttgart przez ONVISTA</small>`; })() : '<small>Brak danych</small>'}${err('EUWAX')}</div>`; }
+          <small>Odczyt z ${hm(E.t)} (${new Date(E.t).toLocaleDateString('pl-PL')}) · dziś min ${fmtNum(E.lo, 1)} / max ${fmtNum(E.hi, 1)} · Börse Stuttgart przez ONVISTA, odświeżane co minutę</small>`; })() : '<small>Brak danych</small>'}${err('EUWAX')}</div>`; }
     if (sent.includes('fg')){ const F = C.fg;
       h += `<div class="card"><div class="row"><b style="flex:1">CNN Fear & Greed (rynek USA)</b>${infoBtn('fg')}</div>${F ? `
         <div class="row" style="margin-top:8px;align-items:flex-end;gap:16px"><div style="font-size:40px;font-weight:800;line-height:1;color:${fgColor(F.s)}">${Math.round(F.s)}</div>
@@ -1387,7 +1396,7 @@ function anaCompactHTML(){
   if (!tabs.includes(k)) k = tabs[0]; if (!k) return '<div class="wd">Brak instrumentów</div>';
   let h = `<div class="wt">${tabs.map(t => `<button data-wt="${t}" class="${t === k ? 'on' : ''}">${esc(INSTR[t].n)}</button>`).join('')}</div><div style="padding:6px 12px">`;
   const sent = sentOf(k), E = C.euwax, F = C.fg, V = C.vix;
-  if (sent.includes('euwax') && E){ const [t] = euwaxTxt(E.v); h += `<div class="row" style="gap:6px"><span style="min-width:62px">EUWAX</span><b style="color:${E.v < 0 ? 'var(--hi)' : 'var(--ok)'}">${E.v > 0 ? '+' : ''}${fmtNum(E.v, 1)}</b><small>${t.toLowerCase()}</small></div>${barCenter(E.v).split('<div class="row"')[0]}`; }
+  if (sent.includes('euwax') && E){ const [t] = euwaxTxt(E.v); h += `<div class="row" style="gap:6px"><span style="min-width:62px">EUWAX</span><b style="color:${E.v < 0 ? 'var(--hi)' : 'var(--ok)'}">${E.v > 0 ? '+' : ''}${fmtNum(E.v, 1)}</b><small>${t.toLowerCase()} · ${hm(E.t)}</small></div>${barCenter(E.v).split('<div class="row"')[0]}`; }
   if (sent.includes('fg') && F) h += `<div class="row" style="gap:6px;margin-top:4px"><span style="min-width:62px">Fear&Greed</span><b style="color:${fgColor(F.s)}">${Math.round(F.s)}</b><small>${(FG_PL[F.r] || F.r).toLowerCase()}</small></div>${barFG(F.s).split('<div class="row"')[0]}`;
   if (sent.includes('vix') && V){ const [vt, vc] = vixTxt(V.v); h += `<div class="row" style="gap:6px;margin-top:4px"><span style="min-width:62px">VIX</span><b style="color:${vc}">${fmtNum(V.v, 2)}</b><small>${vt}</small></div>`; }
   const r = (C.inst || {})[k];
