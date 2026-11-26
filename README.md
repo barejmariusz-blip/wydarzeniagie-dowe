@@ -48,7 +48,8 @@ W Ustawieniach jest też słownik pojęć. Wagi spółek są orientacyjne (`WEIG
 
 - Filtry: rynki, kategorie, minimalny wpływ, waluty, wystąpienia bankierów, ukrywanie po słowach w tytule i ukrywanie pojedynczych wydarzeń. Przycisk **● High** w nagłówku szybko zawęża wszystko do wysokiego wpływu.
 - Przypomnienia: osobne wyprzedzenie dla wysokiego, średniego i niskiego wpływu oraz dla decyzji banków. Dla wydarzeń całodniowych przypomnienie dzień wcześniej i/lub rano. Do tego poranne podsumowanie dnia.
-- Wszystkie godziny są pokazywane w czasie lokalnym telefonu lub komputera.
+- Godziny są pokazywane w czasie lokalnym telefonu lub komputera. Obok widać czas oryginalny publikacji (np. `14:30` i pod spodem `08:30 NY`), gdy różni się od lokalnego.
+- Synchronizacja automatyczna co 15 min, 30 min, 1, 2, 4, 6, 12 lub 24 godziny albo wyłączona (Ustawienia). Na Androidzie działa w tle przy zamkniętej aplikacji (JobScheduler uruchamia ten sam kod UI bez okna, `SyncJob.java`). Na Windows działa, gdy program jest uruchomiony.
 - **Android:** przypomnienia przez AlarmManager, przetrwają restart telefonu. Planowanych jest 150 najbliższych i odświeżają się przy każdym otwarciu apki.
 - **Windows:** powiadomienia systemowe działają, gdy program jest uruchomiony (może być zminimalizowany). W Ustawieniach można włączyć „Uruchamiaj z Windows”: program startuje wtedy zminimalizowany.
 

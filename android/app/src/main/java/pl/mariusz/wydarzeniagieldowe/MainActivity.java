@@ -23,11 +23,7 @@ import android.webkit.WebViewClient;
 
 import org.json.JSONObject;
 
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -37,6 +33,9 @@ public class MainActivity extends Activity {
 
     private static final int FILE_REQ = 42;
     private static final int NOTIF_REQ = 43;
+
+    /** true, gdy aplikacja jest na ekranie: synchronizacja w tle wtedy nic nie robi. */
+    static volatile boolean visible;
 
     private WebView web;
     private ValueCallback<Uri[]> fileCallback;
@@ -93,7 +92,14 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        visible = true;
         if (web != null) web.evaluateJavascript("window.onNativeResume&&window.onNativeResume()", null);
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        visible = false;
     }
 
     @Override
@@ -132,32 +138,15 @@ public class MainActivity extends Activity {
         /** GET bez ograniczeń CORS. Wynik wraca przez window.onHttp(id, status, body). */
         @JavascriptInterface
         public void http(final int id, final String url) {
-            net.execute(() -> {
-                HttpURLConnection c = null;
-                try {
-                    c = (HttpURLConnection) new URL(url).openConnection();
-                    c.setConnectTimeout(15000);
-                    c.setReadTimeout(20000);
-                    c.setInstanceFollowRedirects(true);
-                    c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36 WydarzeniaGieldowe/0.1");
-                    c.setRequestProperty("Accept", "application/json, text/calendar, text/plain, */*");
-                    int code = c.getResponseCode();
-                    InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
-                    ByteArrayOutputStream bo = new ByteArrayOutputStream();
-                    if (in != null) {
-                        byte[] buf = new byte[16384];
-                        int n;
-                        while ((n = in.read(buf)) > 0) bo.write(buf, 0, n);
-                        in.close();
-                    }
-                    deliver(id, code, bo.toString(StandardCharsets.UTF_8.name()));
-                } catch (Exception e) {
-                    deliver(id, 0, String.valueOf(e.getMessage()));
-                } finally {
-                    if (c != null) c.disconnect();
-                }
-            });
+            net.execute(() -> Http.get(url, (st, body) -> deliver(id, st, body)));
         }
+
+        /** Synchronizacja w tle co N minut (0 = wyłączona). */
+        @JavascriptInterface
+        public void setBgSync(int minutes) { SyncJob.schedule(MainActivity.this, minutes); }
+
+        @JavascriptInterface
+        public void bgDone() { }
 
         /** [{at, title, body}] — zastępuje wszystkie zaplanowane przypomnienia. */
         @JavascriptInterface

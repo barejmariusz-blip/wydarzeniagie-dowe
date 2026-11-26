@@ -29,7 +29,7 @@ nav button.on{color:var(--acc)}
 .day.today{color:var(--acc)}
 .day .wk{margin-left:auto;text-transform:none;letter-spacing:0}
 .ev{display:flex;gap:12px;align-items:flex-start;cursor:pointer;padding:10px 12px}
-.ev .t{min-width:46px;font-weight:600;font-variant-numeric:tabular-nums}
+.ev .t{min-width:58px;font-weight:600;font-variant-numeric:tabular-nums}
 .ev .t small{display:block;font-weight:400;font-size:11px}
 .ev .bar{width:4px;align-self:stretch;border-radius:4px}
 .ev .m{flex:1;min-width:0}
@@ -130,7 +130,7 @@ function defaults(){
          rem:{high:[30,5], med:[5], low:[]}, remBank:[60,15],
          dayRem:{eve:true, eveAt:'20:00', morn:true, mornAt:'07:30', minImp:'med'},
          summary:{on:true, at:'07:30', minImp:'med'},
-         lastSync:0},
+         lastSync:0, syncEvery:60},
     src:{ff:{on:true}, cb:{on:true}, exp:{on:true}, hol:{on:true}, dst:{on:true},
          usE:{on:true, tickers:'NVDA, AAPL, MSFT, AMZN, GOOGL, META, TSLA, AVGO'}},
     ics:[], manual:[], cache:{ff:[], usE:[], ics:{}}, flags:{}};
@@ -155,6 +155,7 @@ const hash = s => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + 
 /* ---------- Most natywny: Android (window.Android) / Windows (lokalny serwer /api) ---------- */
 const IS_ANDROID = !!(window.Android && Android.http);
 const IS_WIN = !IS_ANDROID && /^(127\.0\.0\.1|localhost)$/.test(location.hostname);
+const BG = IS_ANDROID && location.hash === '#bg';
 const pend = {}; let reqN = 1;
 window.onHttp = (id, status, body) => { const p = pend[id]; if (!p) return; delete pend[id]; p({status, body}); };
 const Native = {
@@ -190,6 +191,7 @@ const Native = {
     else if (IS_WIN) fetch('/api/test', {method:'POST', body:JSON.stringify({title:t, body:b})});
     else toast('Powiadomienia działają w apce');
   },
+  setBgSync(min){ if (IS_ANDROID && Android.setBgSync) Android.setBgSync(min | 0); },
   openUrl(u){
     if (IS_WIN) fetch('/api/open-url?u=' + encodeURIComponent(u));
     else if (IS_ANDROID) location.href = u;
@@ -221,6 +223,24 @@ function zonedToUtc(y, mo, d, h, mi, s, tz){
   let t = want - off(want); t = want - off(t); return t;
 }
 const ET = 'America/New_York', FRA = 'Europe/Berlin';
+// Strefa czasowa źródła wydarzenia (do pokazania czasu oryginalnego obok lokalnego)
+const CCY_TZ = {USD:'America/New_York', EUR:'Europe/Berlin', GBP:'Europe/London', JPY:'Asia/Tokyo', CNY:'Asia/Shanghai', CHF:'Europe/Zurich',
+  CAD:'America/Toronto', AUD:'Australia/Sydney', NZD:'Pacific/Auckland', PLN:'Europe/Warsaw'};
+const TZ_NAME = {'America/New_York':['NY','w Nowym Jorku (ET)'], 'Europe/Berlin':['Frankfurt','we Frankfurcie (CET)'], 'Europe/London':['Londyn','w Londynie'],
+  'Asia/Tokyo':['Tokio','w Tokio'], 'Asia/Shanghai':['Pekin','w Pekinie'], 'Europe/Zurich':['Zurych','w Zurychu'], 'America/Toronto':['Toronto','w Toronto (ET)'],
+  'America/Chicago':['Chicago','w Chicago (CT)'], 'Australia/Sydney':['Sydney','w Sydney'], 'Pacific/Auckland':['Wellington','w Wellington'], 'Europe/Warsaw':['Warszawa','w Warszawie']};
+function srcTime(e){   // {hm, short, long, dayDiff} albo null, gdy brak strefy albo czas taki sam jak lokalny
+  if (!e.tz || e.allDay) return null;
+  try{
+    const f = new Intl.DateTimeFormat('pl-PL', {timeZone:e.tz, hour:'2-digit', minute:'2-digit', hourCycle:'h23', day:'numeric', month:'numeric'});
+    const p = Object.fromEntries(f.formatToParts(e.start).map(x => [x.type, x.value]));
+    const t = p.hour + ':' + p.minute, d = new Date(e.start);
+    if (t === hm(e.start)) return null;
+    const dd = +p.day - d.getDate(), nm = TZ_NAME[e.tz] || [e.tz.split('/').pop().replace(/_/g,' '), e.tz.split('/').pop().replace(/_/g,' ')];
+    const dayTxt = dd === 0 ? '' : (dd > 0 || dd < -20) ? ' (+1 d.)' : ' (−1 d.)';
+    return {hm:t + dayTxt, short:nm[0], long:nm[1]};
+  }catch(_){ return null; }
+}
 const atTz = (k, h, mi, tz) => { const [y, m, d] = k.split('-').map(Number); return zonedToUtc(y, m-1, d, h, mi, 0, tz); };
 const localDay = k => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m-1, d).getTime(); };
 const kOf = (y, m, d) => { const t = new Date(Date.UTC(y, m, d)); return t.getUTCFullYear() + '-' + String(t.getUTCMonth()+1).padStart(2,'0') + '-' + String(t.getUTCDate()).padStart(2,'0'); };
@@ -321,7 +341,7 @@ function allDayEv(id, k, o){ const s = localDay(k); return mk({id, start:s, end:
 const on = m => S.set.markets[m] !== false;
 
 function genExpiry(y, out){
-  const tm = (id, mkt, k, h, mi, tz, o) => { const t = atTz(k, h, mi, tz); out.push(mk({id:id + k, mkt, cat:'wyg', start:t, end:t + 5*MIN, ...o})); };
+  const tm = (id, mkt, k, h, mi, tz, o) => { const t = atTz(k, h, mi, tz); out.push(mk({id:id + k, mkt, tz, cat:'wyg', start:t, end:t + 5*MIN, ...o})); };
   for (let m = 0; m < 12; m++){
     const q = m % 3 === 2, fri3 = nthWd(y, m, 5, 3);
     if (on('de')){
@@ -381,7 +401,7 @@ function genEvents(from, to){
         out.push(allDayEv('hol:' + m + ':' + k, k, {mkt:m, closed:true, src:'Kalendarz giełdy', cat:'sesja', ccy:MARKETS[m].ccy, impact:m === 'de' || m === 'us' ? 'high' : 'med',
           title:MKT_NAME[m] + ' zamknięte – ' + n, info:CLOSED_INFO[m]}));
       for (const [m, k, h, mi, tz, title, info] of earlyCloses(y)) if (on(m)){ const t = atTz(k, h, mi, tz);
-        out.push(mk({id:'early:' + m + ':' + k, mkt:m, src:'Kalendarz giełdy', cat:'sesja', ccy:MARKETS[m].ccy, impact:'low', start:t, end:t + 5*MIN, title, info:info + ' Popołudnie zwykle bardzo spokojne.'})); }
+        out.push(mk({id:'early:' + m + ':' + k, mkt:m, tz, src:'Kalendarz giełdy', cat:'sesja', ccy:MARKETS[m].ccy, impact:'low', start:t, end:t + 5*MIN, title, info:info + ' Popołudnie zwykle bardzo spokojne.'})); }
     }
     if (S.src.dst.on){
       const usOn = nthWd(y,2,0,2), euOn = lastWd(y,2,0), euOff = lastWd(y,9,0), usOff = nthWd(y,10,0,1);
@@ -394,8 +414,8 @@ function genEvents(from, to){
   }
   if (S.src.cb.on){
     const pair = (id, k, h, mi, tz, ccy, src, title, info, conf, confOff) => { const t = atTz(k, h, mi, tz);
-      out.push(mk({id:id + k, src, cat:'bank', ccy, impact:'high', start:t, end:t + 5*MIN, title, info}));
-      if (conf) out.push(mk({id:id + 'pc:' + k, src, cat:'bank', ccy, impact:'high', start:t + confOff*MIN, end:t + (confOff + 60)*MIN, title:conf, info:''})); };
+      out.push(mk({id:id + k, src, tz, cat:'bank', ccy, impact:'high', start:t, end:t + 5*MIN, title, info}));
+      if (conf) out.push(mk({id:id + 'pc:' + k, src, tz, cat:'bank', ccy, impact:'high', start:t + confOff*MIN, end:t + (confOff + 60)*MIN, title:conf, info:''})); };
     for (const k of FOMC) pair('fomc:', k, 14, 0, ET, 'USD', 'Kalendarz Fed', 'FOMC – decyzja ws. stóp procentowych (Fed)', 'Komunikat 14:00 ET, konferencja 30 min później.', 'FOMC – konferencja prezesa Fed', 30);
     for (const k of FOMC_STRATEGY) out.push(allDayEv('fomcs:'+k, k, {src:'Kalendarz Fed', cat:'bank', ccy:'USD', impact:'low', title:'FOMC – posiedzenie strategiczne (bez decyzji o stopach)', info:''}));
     for (const k of ECB) pair('ecb:', k, 14, 15, FRA, 'EUR', 'Kalendarz EBC', 'EBC – decyzja ws. stóp procentowych', 'Komunikat 14:15, konferencja 14:45 (czas Frankfurtu).', 'EBC – konferencja prasowa', 30);
@@ -420,11 +440,11 @@ function ffMap(x){
   const id = 'ff:' + hash(x.country + '|' + x.title + '|' + x.date);
   if (hol){ const d = new Date(start), s = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     return mk({id, src:'Forex Factory', cat:'sesja', ccy:x.country, impact:'none', start:s, end:s + DAY, allDay:true, title:x.country + ': ' + x.title, info:'Święto bankowe, mniejsza płynność w tej walucie.'}); }
-  return mk({id, src:'Forex Factory', cat:BANK_RX.test(x.title) ? 'bank' : 'makro', ccy:x.country, impact:imp, start, end:start + 5*MIN, title:x.title, info, speech:/Speaks|Testifies/i.test(x.title)});
+  return mk({id, src:'Forex Factory', tz:CCY_TZ[x.country] || '', cat:BANK_RX.test(x.title) ? 'bank' : 'makro', ccy:x.country, impact:imp, start, end:start + 5*MIN, title:x.title, info, speech:/Speaks|Testifies/i.test(x.title)});
 }
 async function syncFF(force){
   const st = S.src.ff;
-  if (!force && st.t && Date.now() - st.t < HOUR) return;
+  if (!force && st.t && Date.now() - st.t < HOUR) return;   // przy otwarciu apki: najwyżej co godzinę
   if (st.t && Date.now() - st.t < 5*MIN) return;   // Forex Factory blokuje zbyt częste pobieranie
   st.t = Date.now();
   const res = [];
@@ -457,7 +477,7 @@ async function syncUsE(force){
         const info = [when === 'pre' ? 'Przed otwarciem sesji w USA' : when === 'after' ? 'Po zamknięciu sesji w USA' : 'Pora nieznana',
                       r.epsForecast ? 'Prognoza EPS: ' + r.epsForecast : '', r.fiscalQuarterEnding ? 'Kwartał: ' + r.fiscalQuarterEnding : ''].filter(Boolean).join(' · ');
         const base = {id:'ern:' + sym + ':' + k, src:'Nasdaq', cat:'wyniki', ccy:'USD', impact:'med', title:sym + ' – wyniki (' + (r.name || sym) + ')', info};
-        if (when){ const t = atTz(k, when === 'pre' ? 7 : 16, when === 'pre' ? 0 : 5, ET); out.push(mk({...base, start:t, end:t + 5*MIN})); }
+        if (when){ const t = atTz(k, when === 'pre' ? 7 : 16, when === 'pre' ? 0 : 5, ET); out.push(mk({...base, tz:ET, start:t, end:t + 5*MIN})); }
         else out.push(allDayEv(base.id, k, base));
       } }catch(_){ } } };
   await Promise.all([worker(), worker(), worker()]);
@@ -478,7 +498,7 @@ function parseICS(txt){
   for (const ln of lines){
     if (ln === 'BEGIN:VEVENT'){ cur = {}; continue; }
     if (ln === 'END:VEVENT'){
-      if (cur && cur.start) out.push({uid:cur.uid || (cur.title + cur.start), title:cur.title || '(bez tytułu)', start:cur.start,
+      if (cur && cur.start) out.push({uid:cur.uid || (cur.title + cur.start), title:cur.title || '(bez tytułu)', start:cur.start, tz:cur.tz || '',
         end:cur.end || cur.start + (cur.allDay ? DAY : HOUR), allDay:!!cur.allDay, info:[cur.loc, (cur.desc || '').slice(0,400)].filter(Boolean).join('\n')});
       cur = null; continue;
     }
@@ -493,7 +513,7 @@ function parseICS(txt){
     else if (name === 'UID') cur.uid = val;
     else if (name === 'DTSTART' || name === 'DTEND'){
       const t = icsTime(val, P);
-      if (name === 'DTSTART'){ cur.start = t.ms; cur.allDay = t.allDay; } else cur.end = t.ms;
+      if (name === 'DTSTART'){ cur.start = t.ms; cur.allDay = t.allDay; if (P.TZID) cur.tz = P.TZID.replace(/"/g,''); } else cur.end = t.ms;
     }
   }
   return out;
@@ -552,10 +572,10 @@ function visible(){ const w = words(); return allEvents().filter(e => pass(e, w)
 
 /* ---------- Synchronizacja ---------- */
 let syncing = false;
-async function syncAll(manual){
+async function syncAll(manual, auto){
   if (syncing) return; syncing = true; $('#syncBtn').textContent = '⟳ …';
   const jobs = [];
-  if (S.src.ff.on) jobs.push(['Forex Factory', S.src.ff, () => syncFF(manual)]);
+  if (S.src.ff.on) jobs.push(['Forex Factory', S.src.ff, () => syncFF(manual || auto)]);
   if (S.src.usE.on) jobs.push(['Wyniki USA', S.src.usE, () => syncUsE(manual)]);
   for (const s of S.ics) if (s.on !== false) jobs.push([s.name, s, () => syncICS(s)]);
   const fail = [];
@@ -565,7 +585,7 @@ async function syncAll(manual){
   }
   S.set.lastSync = Date.now(); save(); reschedule(); render();
   syncing = false; $('#syncBtn').textContent = '⟳ Odśwież';
-  if (manual || fail.length) toast(fail.length ? 'Błąd: ' + fail.join(', ') : 'Zaktualizowano');
+  if (!BG && (manual || (fail.length && !auto))) toast(fail.length ? 'Błąd: ' + fail.join(', ') : 'Zaktualizowano');
 }
 
 /* ---------- Przypomnienia ---------- */
@@ -639,7 +659,7 @@ function evRow(e){
   const soon = !e.allDay && e.start > now && e.start - now < 12*HOUR ? `<small>za ${countdown(e.start - now)}</small>` : '';
   return `<div class="card ev ${past ? 'past' : ''} ${live ? 'now' : ''}" data-ev="${esc(e.key)}">
     <div class="bar" style="background:${IMP_C[e.impact]}"></div>
-    <div class="t">${e.allDay ? 'cały<br>dzień' : hm(e.start)}${soon}</div>
+    <div class="t">${e.allDay ? 'cały<br>dzień' : hm(e.start)}${(st => st ? `<small title="czas ${esc(st.long)}">${st.hm} ${esc(st.short)}</small>` : '')(srcTime(e))}${soon}</div>
     <div class="m"><div class="n">${e.ccy ? `<span class="ccy">${esc(e.ccy)}</span>` : ''}${esc(e.title)}</div>
       <div class="s"><span class="tag" style="color:${CATS[e.cat].c}">${CATS[e.cat].n}</span>${f.mute ? '<span class="tag">🔕</span>' : ''}${esc(e.info)}</div></div></div>`;
 }
@@ -764,6 +784,14 @@ function vSettings(){
   <div class="card"><b>Poranne podsumowanie dnia</b>
     <div class="row" style="margin-top:8px"><button class="chip ${SM.on ? 'on' : ''}" id="sO">${SM.on ? 'Włączone' : 'Wyłączone'}</button><input type="time" id="sT" value="${SM.at}">${impSel('sI', SM.minImp)}</div>
     <small>Jedno powiadomienie z listą dzisiejszych wydarzeń. Tylko w dni, w których coś jest.</small></div>
+  <div class="card"><b>Synchronizacja automatyczna</b>
+    <label>Pobieraj nowe dane co</label>
+    <select id="syE" style="width:auto">${[[0,'Wyłączona (tylko przy otwarciu i ręcznie)'],[15,'15 minut'],[30,'30 minut'],[60,'1 godzinę'],[120,'2 godziny'],[240,'4 godziny'],[360,'6 godzin'],[720,'12 godzin'],[1440,'24 godziny']]
+      .map(([v, n]) => `<option value="${v}" ${S.set.syncEvery === v ? 'selected' : ''}>${n}</option>`).join('')}</select>
+    <div style="margin-top:6px"><small>${IS_ANDROID ? 'Działa w tle także przy zamkniętej aplikacji. Android może opóźniać synchronizację, gdy telefon oszczędza baterię albo nie ma internetu.'
+      : IS_WIN ? 'Działa, gdy program jest uruchomiony (może być zminimalizowany). Żeby działało stale, włącz „Uruchamiaj z Windows”.' : 'Działa, gdy strona jest otwarta.'}
+      Ostatnio: ${S.set.lastSync ? new Date(S.set.lastSync).toLocaleString('pl-PL',{day:'numeric',month:'numeric',hour:'2-digit',minute:'2-digit'}) : 'nigdy'}${S.set.syncEvery ? ' · następna ok. ' + new Date(Math.max(Date.now(), S.set.lastSync + S.set.syncEvery*MIN)).toLocaleTimeString('pl-PL',{hour:'2-digit',minute:'2-digit'}) : ''}.
+      Forex Factory pobierane jest najwyżej co 5 minut, bo blokuje częstsze zapytania.</small></div></div>
   <div class="card"><b>Zakres</b><label>Ile dni do przodu pokazywać</label><input type="number" id="hor" value="${S.set.horizon}" min="7" max="365" style="width:120px"></div>
   <div class="card"><b>Dane</b><div class="row" style="margin-top:8px">
     <button class="btn sm" id="exp">Eksport kopii</button>
@@ -783,6 +811,7 @@ function vSettings(){
   $('#sO').onclick = () => { SM.on = !SM.on; upd(); };
   $('#sT').onchange = e => { SM.at = e.target.value || '07:30'; upd(); };
   $('#sI').onchange = e => { SM.minImp = e.target.value; upd(); };
+  $('#syE').onchange = e => { S.set.syncEvery = +e.target.value; save(); Native.setBgSync(S.set.syncEvery); render(); toast(S.set.syncEvery ? 'Synchronizacja co ' + fmtOff(S.set.syncEvery) : 'Synchronizacja automatyczna wyłączona'); };
   $('#hor').onchange = e => { S.set.horizon = Math.max(7, Math.min(365, +e.target.value || 60)); upd(); };
   $('#exp').onclick = async () => toast(await Native.saveFile('wydarzenia-gieldowe-' + new Date().toISOString().slice(0,10) + '.json', JSON.stringify(S), 'application/json'));
   $('#imp').onchange = e => { const f = e.target.files[0]; if (!f) return; f.text().then(t => {
@@ -979,7 +1008,8 @@ function openEvent(key){
   const man = S.manual.find(m => m.id === key);
   sheet(`<div class="row"><span class="tag" style="color:${CATS[e.cat].c}">${CATS[e.cat].n}</span><span class="tag"><i class="imp" style="background:${IMP_C[e.impact]}"></i>wpływ: ${IMP_N[e.impact].toLowerCase()}</span>${e.ccy ? `<span class="ccy">${esc(e.ccy)}</span>` : ''}</div>
     <h2 style="margin-top:10px">${esc(e.title)}</h2>
-    <p>🗓 ${fmtTime(e)}${e.allDay ? ' (cały dzień)' : ''}${!e.allDay && e.start > Date.now() ? ' · za ' + countdown(e.start - Date.now()) : ''}</p>
+    <p>🗓 ${fmtTime(e)}${e.allDay ? ' (cały dzień)' : ' (czas lokalny)'}${!e.allDay && e.start > Date.now() ? ' · za ' + countdown(e.start - Date.now()) : ''}
+      ${(st => st ? `<br><span style="color:var(--mut)">🌐 ${st.hm} ${esc(st.long)}: czas oryginalny publikacji</span>` : '')(srcTime(e))}</p>
     ${e.info ? `<p style="white-space:pre-wrap;color:var(--mut)">${esc(e.info)}</p>` : ''}
     ${explainHTML(e)}
     <p><small>Źródło: ${esc(e.src)}</small></p>
@@ -1044,14 +1074,22 @@ $('#view').onclick = e => {
 };
 $('#syncBtn').onclick = () => syncAll(true);
 $('#hiBtn').onclick = () => { S.set.onlyHigh = !S.set.onlyHigh; save(); reschedule(); render(); toast(S.set.onlyHigh ? 'Tylko wysoki wpływ' : 'Wszystkie wg filtrów'); };
-const stale = () => Date.now() - S.set.lastSync > HOUR;
-window.onNativeResume = () => { if (stale()) syncAll(); else render(); };
-setInterval(() => { if (stale()) syncAll(); else if (tab === 'up' && $('#sheet').style.display !== 'block') render(); }, 60000);
+// Synchronizacja automatyczna: co S.set.syncEvery minut (0 = tylko przy otwarciu i ręcznie).
+// Android: dodatkowo zadanie w tle (JobScheduler) działa przy zamkniętej apce. Windows: gdy program jest uruchomiony (także zminimalizowany).
+const stale = () => Date.now() - S.set.lastSync > (S.set.syncEvery ? S.set.syncEvery * MIN : HOUR);
+window.onNativeResume = () => { if (stale()) syncAll(false, true); else render(); };
+setInterval(() => { if (S.set.syncEvery && stale()) syncAll(false, true); else if (tab === 'up' && $('#sheet').style.display !== 'block') render(); }, 60000);
 
-render();
-reschedule();
-if (Native.notifyState() === 'ask') Native.askNotify();
-syncAll();
+if (BG){
+  // Uruchomione przez zadanie w tle na Androidzie: synchronizacja, przeplanowanie przypomnień, koniec.
+  syncAll(false, true).catch(() => {}).then(() => { try{ Android.bgDone(); }catch(_){} });
+} else {
+  render();
+  reschedule();
+  Native.setBgSync(S.set.syncEvery);
+  if (Native.notifyState() === 'ask') Native.askNotify();
+  syncAll(false, stale());
+}
 </script>
 </body>
 </html>
