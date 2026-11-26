@@ -80,6 +80,16 @@ body.widget header,body.widget nav,body.widget main{display:none}
 #wg .wd{padding:6px 12px 2px;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
 #wg .wa{background:#3a1118;border-bottom:1px solid #6b2230;padding:10px 12px}
 #wg .wa b{color:#ffb3bb}
+#wg{position:relative}
+.rz{position:absolute;z-index:9}
+.rz.l{left:0;top:6px;bottom:6px;width:5px;cursor:ew-resize}.rz.r{right:0;top:6px;bottom:6px;width:5px;cursor:ew-resize}
+.rz.t{top:0;left:6px;right:6px;height:4px;cursor:ns-resize}.rz.b{bottom:0;left:6px;right:6px;height:5px;cursor:ns-resize}
+.rz.tl{left:0;top:0;width:8px;height:8px;cursor:nwse-resize}.rz.br{right:0;bottom:0;width:12px;height:12px;cursor:nwse-resize}
+.rz.tr{right:0;top:0;width:8px;height:8px;cursor:nesw-resize}.rz.bl{left:0;bottom:0;width:8px;height:8px;cursor:nesw-resize}
+.rz.br::after{content:'';position:absolute;right:3px;bottom:3px;width:6px;height:6px;border-right:2px solid #3a4258;border-bottom:2px solid #3a4258}
+#wg .pm{position:absolute;right:8px;top:34px;background:#1c2130;border:1px solid var(--line);border-radius:10px;padding:4px;z-index:10;min-width:170px}
+#wg .pm button{display:block;width:100%;text-align:left;background:none;border:0;color:var(--tx);padding:6px 10px;border-radius:7px;cursor:pointer;font-size:13px}
+#wg .pm button:hover{background:#262c3d}#wg .pm button.on{color:var(--acc)}
 .src .st{font-size:12px;color:var(--mut);margin-top:4px}
 .src .st .e{color:var(--bad)}
 </style>
@@ -1118,14 +1128,17 @@ function startWidget(){
   document.body.classList.add('widget');
   const W = $('#wg');
   const post = u => fetch(u, {method:'POST'}).catch(() => {});
-  let alert = null;
+  let alert = null, corner = '', pinMenu = false;
+  fetch('/api/widget').then(r => r.json()).then(j => { corner = j.corner || ''; draw(); }).catch(() => {});
+  const CORNERS = [['', '✥ Swobodnie (przeciągaj)'], ['tl', '↖ Lewy górny róg'], ['tr', '↗ Prawy górny róg'], ['bl', '↙ Lewy dolny róg'], ['br', '↘ Prawy dolny róg']];
+  const HT = {l:10, r:11, t:12, tl:13, tr:14, b:15, bl:16, br:17};
   const draw = () => {
     try{ S = migrate(load()); }catch(_){}
     const now = Date.now(), ev = visible(), n = nextHigh();
     const endTmr = new Date(); endTmr.setHours(0,0,0,0); endTmr.setDate(endTmr.getDate() + 2);
     const list = ev.filter(e => !e.allDay && e.end > now - 15*MIN && e.start < endTmr.getTime() && IMP[e.impact] >= 2).slice(0, 14);
     const allday = ev.filter(e => e.allDay && e.start <= now && e.end > now && IMP[e.impact] >= 2);
-    let html = `<div class="wh" id="wgH"><b>Wydarzenia giełdowe</b><button id="wgO" title="Otwórz program">⤢</button><button id="wgX" title="Ukryj widget (włączysz w menu ikony przy zegarze)">×</button></div>`;
+    let html = `<div class="wh" id="wgH"><b>Wydarzenia giełdowe</b><button id="wgP" title="Przypnij do rogu ekranu" style="${corner ? 'color:var(--acc)' : ''}">📌</button><button id="wgO" title="Otwórz program">⤢</button><button id="wgX" title="Ukryj widget (włączysz w menu ikony przy zegarze)">×</button></div>`;
     if (alert) html += `<div class="wa"><b>${esc(alert.title)}</b><div style="margin:4px 0 8px;white-space:pre-wrap">${esc(alert.body)}</div><button class="btn sm acc" id="wgA">OK</button></div>`;
     if (n){ const st = srcTime(n);
       html += `<div class="wn" data-o="1"><small>Najbliższe ważne · ${hm(n.start)}${st ? ' (' + st.hm + ' ' + esc(st.short) + ')' : ''}</small>
@@ -1141,8 +1154,15 @@ function startWidget(){
         <div class="tm">${hm(e.start)}${st ? `<small>${st.hm} ${esc(st.short)}</small>` : ''}</div><div>${e.ccy ? `<span class="ccy">${esc(e.ccy)}</span>` : ''}${esc(e.title)}</div></div>`;
     }
     if (!list.length && !allday.length) html += '<div class="wd" style="text-transform:none">Dziś i jutro brak ważnych wydarzeń</div>';
+    if (pinMenu) html += `<div class="pm">${CORNERS.map(([k, n]) => `<button data-c="${k}" class="${k === corner ? 'on' : ''}">${n}</button>`).join('')}</div>`;
+    html += Object.keys(HT).map(k => `<div class="rz ${k}" data-rz="${k}"></div>`).join('');
     W.innerHTML = html + '</div>';
-    $('#wgH').onmousedown = e => { if (e.button === 0 && !e.target.closest('button') && window.wgDrag) window.wgDrag(); };
+    W.querySelectorAll('[data-rz]').forEach(g => g.onmousedown = e => { if (e.button === 0 && window.wgResize){ e.preventDefault(); window.wgResize(HT[g.dataset.rz]); } });
+    $('#wgP').onclick = () => { pinMenu = !pinMenu; draw(); };
+    W.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { corner = b.dataset.c; pinMenu = false;
+      fetch('/api/widget', {method:'POST', body:JSON.stringify({corner})}).catch(() => {}); draw(); });
+    $('#wgH').onmousedown = e => { if (e.button === 0 && !e.target.closest('button') && window.wgDrag){ window.wgDrag();
+      setTimeout(() => fetch('/api/widget').then(r => r.json()).then(j => { if ((j.corner || '') !== corner){ corner = j.corner || ''; draw(); } }), 800); } };
     $('#wgO').onclick = () => post('/api/show-main');
     $('#wgX').onclick = () => post('/api/widget-hide');
     if ($('#wgA')) $('#wgA').onclick = () => { alert = null; post('/api/widget-ack'); draw(); };

@@ -110,11 +110,19 @@ func serve(ln net.Listener) {
 	// Widget i zasobnik
 	mux.HandleFunc("/api/widget", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
-			var req struct{ On bool }
+			var req struct {
+				On     *bool
+				Corner *string
+			}
 			json.NewDecoder(r.Body).Decode(&req)
-			setWidget(req.On)
+			if req.On != nil {
+				setWidget(*req.On)
+			}
+			if req.Corner != nil {
+				setCorner(*req.Corner)
+			}
 		}
-		jsonOut(w, map[string]bool{"on": widgetEnabled()})
+		jsonOut(w, map[string]any{"on": widgetEnabled(), "corner": widgetCorner()})
 	})
 	mux.HandleFunc("/api/widget-alert", func(w http.ResponseWriter, r *http.Request) { jsonOut(w, map[string]any{"alert": currentAlert()}) })
 	mux.HandleFunc("/api/widget-ack", func(w http.ResponseWriter, r *http.Request) { ackAlert(); jsonOut(w, map[string]bool{"ok": true}) })

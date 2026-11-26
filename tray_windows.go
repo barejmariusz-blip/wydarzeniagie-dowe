@@ -49,6 +49,8 @@ var (
 	pSystemParamsInfo  = user32.NewProc("SystemParametersInfoW")
 	pRegisterWindowMsg = user32.NewProc("RegisterWindowMessageW")
 	pGetModuleHandle   = kernel.NewProc("GetModuleHandleW")
+	pMonitorFromWindow = user32.NewProc("MonitorFromWindow")
+	pGetMonitorInfo    = user32.NewProc("GetMonitorInfoW")
 )
 
 const (
@@ -163,11 +165,14 @@ type windowPos struct {
 // ---------------------------------------------------------------- konfiguracja (widget)
 
 type appConfig struct {
-	Widget  bool  `json:"widget"`
-	WX      int32 `json:"wx"`
-	WY      int32 `json:"wy"`
-	HasPos  bool  `json:"hasPos"`
-	Balloon bool  `json:"balloon"` // pokazano już dymek „działa w tle”
+	Widget  bool   `json:"widget"`
+	WX      int32  `json:"wx"`
+	WY      int32  `json:"wy"`
+	HasPos  bool   `json:"hasPos"`
+	Balloon bool   `json:"balloon"` // pokazano już dymek „działa w tle”
+	WW      int32  `json:"ww"`      // rozmiar widgetu
+	WH      int32  `json:"wh"`
+	Corner  string `json:"corner"` // "" = swobodnie, "tl" | "tr" | "bl" | "br" = przypięty do rogu ekranu
 }
 
 var (
@@ -293,13 +298,29 @@ func widgetProc(hwnd, msg, wp, lp uintptr) uintptr {
 			p.HWndInsertAfter = hwndBottom
 			p.Flags &^= swpNoZOrder
 		}
+	case 0x0083: // WM_NCCALCSIZE: bez widocznej ramki (WS_THICKFRAME tylko dla zmiany rozmiaru)
+		if wp != 0 {
+			return 0
+		}
+	case 0x0024: // WM_GETMINMAXINFO: minimalny rozmiar
+		mm := *(**[10]int32)(unsafe.Pointer(&lp))
+		mm[6], mm[7] = minWidgetW, minWidgetH
+		return 0
 	case wmExitSizeMove:
 		var r rect
 		pGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r)))
 		cfgMu.Lock()
+		if dragging {
+			cfg.Corner = "" // przeciągnięty ręcznie: odpięty od rogu
+		}
 		cfg.WX, cfg.WY, cfg.HasPos = r.Left, r.Top, true
+		cfg.WW, cfg.WH = r.Right-r.Left, r.Bottom-r.Top
 		cfgMu.Unlock()
+		dragging = false
 		saveConfig()
+		anchorWidget()
+	case 0x007E, 0x001A: // WM_DISPLAYCHANGE, WM_SETTINGCHANGE (rozdzielczość, pasek zadań)
+		go func() { time.Sleep(500 * time.Millisecond); anchorWidget() }()
 	}
 	r, _, _ := pCallWindowProc.Call(widgetOldProc, hwnd, msg, wp, lp)
 	return r
@@ -329,23 +350,104 @@ func createWidget() {
 	widgetOldProc, _, _ = pSetWindowLongPtr.Call(widgetHwnd, negIdx(gwlWndProc), windows.NewCallback(widgetProc))
 
 	cfgMu.Lock()
-	x, y, has := cfg.WX, cfg.WY, cfg.HasPos
-	cfgMu.Unlock()
+	x, y, has, ww, wh := cfg.WX, cfg.WY, cfg.HasPos, cfg.WW, cfg.WH
 	if !has {
-		var wa rect
-		pSystemParamsInfo.Call(0x0030 /*SPI_GETWORKAREA*/, 0, uintptr(unsafe.Pointer(&wa)), 0)
-		x, y = wa.Right-widgetW-16, wa.Bottom-widgetH-16
+		cfg.Corner = "br" // pierwszy start: prawy dolny róg
 	}
-	pSetWindowPos.Call(widgetHwnd, hwndBottom, uintptr(x), uintptr(y), widgetW, widgetH, swpNoActivate|swpFrameChanged|swpShowWindow)
+	cfgMu.Unlock()
+	if ww < minWidgetW || wh < minWidgetH {
+		ww, wh = widgetW, widgetH
+	}
+	// WS_THICKFRAME pozwala zmieniać rozmiar; ramkę ukrywa WM_NCCALCSIZE
+	pSetWindowLongPtr.Call(widgetHwnd, negIdx(gwlStyle), wsPopup|wsVisible|wsClipChildren|0x00040000)
+	pSetWindowPos.Call(widgetHwnd, hwndBottom, uintptr(x), uintptr(y), uintptr(ww), uintptr(wh), swpNoActivate|swpFrameChanged|swpShowWindow)
+	anchorWidget()
 
 	// Przeciąganie musi ruszyć w wątku okien w trakcie wciśniętego przycisku: Bind działa synchronicznie.
 	// (Pozostałe akcje widgetu idą przez /api/…)
 	wv.Bind("wgDrag", func() {
+		dragging = true
 		pReleaseCapture.Call()
 		pSendMessage.Call(widgetHwnd, wmNcLButtonDown, htCaption, 0)
 	})
+	// Zmiana rozmiaru za krawędź: ht = HTLEFT(10)…HTBOTTOMRIGHT(17)
+	wv.Bind("wgResize", func(ht int) {
+		if ht < 10 || ht > 17 {
+			return
+		}
+		pReleaseCapture.Call()
+		pSendMessage.Call(widgetHwnd, wmNcLButtonDown, uintptr(ht), 0)
+	})
 	wv.Navigate(baseURL + "?widget=1")
 }
+
+var dragging bool
+
+const (
+	minWidgetW = 220
+	minWidgetH = 160
+	pinMargin  = 12
+)
+
+type monitorInfo struct {
+	CbSize  uint32
+	Monitor rect
+	Work    rect
+	Flags   uint32
+}
+
+// Przypięty widget trzyma się wybranego rogu obszaru roboczego monitora (bez paska zadań).
+func anchorWidget() {
+	if widgetHwnd == 0 {
+		return
+	}
+	cfgMu.Lock()
+	c := cfg.Corner
+	cfgMu.Unlock()
+	if c == "" {
+		return
+	}
+	var r rect
+	pGetWindowRect.Call(widgetHwnd, uintptr(unsafe.Pointer(&r)))
+	w, h := r.Right-r.Left, r.Bottom-r.Top
+	mon, _, _ := pMonitorFromWindow.Call(widgetHwnd, 2 /*MONITOR_DEFAULTTONEAREST*/)
+	mi := monitorInfo{}
+	mi.CbSize = uint32(unsafe.Sizeof(mi))
+	if ok, _, _ := pGetMonitorInfo.Call(mon, uintptr(unsafe.Pointer(&mi))); ok == 0 {
+		pSystemParamsInfo.Call(0x0030, 0, uintptr(unsafe.Pointer(&mi.Work)), 0)
+	}
+	wa := mi.Work
+	x, y := wa.Left+pinMargin, wa.Top+pinMargin
+	if c == "tr" || c == "br" {
+		x = wa.Right - w - pinMargin
+	}
+	if c == "bl" || c == "br" {
+		y = wa.Bottom - h - pinMargin
+	}
+	if x == r.Left && y == r.Top {
+		return
+	}
+	pSetWindowPos.Call(widgetHwnd, 0, uintptr(x), uintptr(y), 0, 0, swpNoSize|swpNoZOrder|swpNoActivate)
+	cfgMu.Lock()
+	cfg.WX, cfg.WY, cfg.HasPos = x, y, true
+	cfgMu.Unlock()
+	saveConfig()
+}
+
+func setCorner(c string) {
+	switch c {
+	case "", "tl", "tr", "bl", "br":
+	default:
+		return
+	}
+	cfgMu.Lock()
+	cfg.Corner = c
+	cfgMu.Unlock()
+	saveConfig()
+	anchorWidget()
+}
+
+func widgetCorner() string { cfgMu.Lock(); defer cfgMu.Unlock(); return cfg.Corner }
 
 func negIdx(i int) uintptr { return uintptr(i) } // indeksy GWL są ujemne: konwersja z zachowaniem bitów
 
